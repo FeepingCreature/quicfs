@@ -8,8 +8,7 @@ use axum::{
 };
 use axum::body::Body;
 use axum::http::Request;
-use quinn::Endpoint;
-use quinn::crypto::rustls::QuicServerConfig;
+use quinn::{self, Endpoint, crypto::rustls::QuicServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -147,7 +146,7 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                                 Ok(s) => s,
                             };
                             
-                            let (mut send, mut recv) = stream;
+                            let (mut send, mut _recv) = stream;
                             println!("New stream established");
                             
                             // Simple response for now
