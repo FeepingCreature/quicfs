@@ -87,14 +87,19 @@ impl HttpServer {
                                         println!("Converting response body...");
                                         match body.frame().await {
                                             Some(Ok(frame)) => {
+                                                println!("Got response frame: {:?}", frame);
                                                 if let Ok(data) = frame.into_data() {
+                                                    println!("Converted to data: {:?}", String::from_utf8_lossy(&data));
                                                     println!("Sending response data ({} bytes)...", data.len());
                                                     send.send_data(data.into()).await?;
                                                     println!("Response data sent successfully");
+                                                } else {
+                                                    println!("Failed to convert frame to data");
                                                 }
                                             }
                                             Some(Err(e)) => {
                                                 println!("Error converting body frame: {}", e);
+                                                println!("Error details: {:?}", e);
                                                 return Err(anyhow::anyhow!("Body error: {}", e));
                                             }
                                             None => println!("No response body to send"),
