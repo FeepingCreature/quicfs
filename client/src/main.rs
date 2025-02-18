@@ -47,7 +47,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    client: h3::client::Connection<h3_quinn::Connection, Bytes>,
+    send_request: h3::client::SendRequest<h3_quinn::Connection>,
     inodes: HashMap<u64, FileAttr>,
     next_inode: u64,
     server_url: String,
@@ -60,15 +60,19 @@ impl QuicFS {
             .uri(format!("{}/dir{}", self.server_url, path))
             .body(())?;
 
-        let mut resp = self.client.send_request(req).await?;
-        resp.finish().await?;
-        let (parts, body) = resp.into_parts();
-        
-        if !parts.status.is_success() {
-            return Err(anyhow::anyhow!("Server returned error: {}", parts.status));
+        let mut stream = self.send_request.send_request(req).await?;
+        stream.finish().await?;
+
+        let resp = stream.recv_response().await?;
+        if !resp.status().is_success() {
+            return Err(anyhow::anyhow!("Server returned error: {}", resp.status()));
         }
 
-        let body = body.recv_response()?.await?;
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.recv_data().await? {
+            body.extend_from_slice(&chunk);
+        }
+
         let dir_list: DirList = serde_json::from_slice(&body)?;
         Ok(dir_list)
     }
@@ -85,7 +89,9 @@ impl QuicFS {
             .with_no_client_auth();
         
         crypto_config.alpn_protocols = vec![b"h3".to_vec()];
-        let client_config = quinn::ClientConfig::new(Arc::new(crypto_config));
+        let client_config = quinn::ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
+        ));
 
         let endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
         let addr = format!("{}:{}", host, port).parse()?;
@@ -93,10 +99,17 @@ impl QuicFS {
             .await?;
             
         let h3_conn = h3_quinn::Connection::new(connection);
-        let client = h3::client::Connection::new(h3_conn).await?;
+        let (driver, send_request) = h3::client::new(h3_conn).await?;
+
+        // Spawn the connection driver
+        tokio::spawn(async move {
+            if let Err(e) = driver.await {
+                tracing::error!("Connection driver error: {}", e);
+            }
+        });
 
         let mut fs = QuicFS {
-            client,
+            send_request,
             inodes: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
             server_url,
