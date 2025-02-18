@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use quicfs_common::types::{DirEntry, DirList};
 use http::Request;
-use bytes::Bytes;
+use quinn::rustls::{self, ClientConfig};
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -47,7 +47,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    send_request: h3::client::SendRequest<h3_quinn::Connection>,
+    send_request: h3::client::SendRequest<h3_quinn::Connection, bytes::Bytes>,
     inodes: HashMap<u64, FileAttr>,
     next_inode: u64,
     server_url: String,
@@ -83,14 +83,16 @@ impl QuicFS {
         let host = url.host().unwrap();
         let port = url.port_u16().unwrap_or(4433);
         
-        let mut crypto_config = rustls::ClientConfig::builder()
+        let mut crypto_config = ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
             .with_no_client_auth();
         
         crypto_config.alpn_protocols = vec![b"h3".to_vec()];
+        crypto_config.enable_early_data = true;
+        
         let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
+            quinn::crypto::rustls::QuicClientConfig::new(crypto_config)
         ));
 
         let endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
@@ -103,7 +105,7 @@ impl QuicFS {
 
         // Spawn the connection driver
         tokio::spawn(async move {
-            if let Err(e) = driver.await {
+            if let Err(e) = driver.drive() {
                 tracing::error!("Connection driver error: {}", e);
             }
         });
