@@ -63,7 +63,7 @@ impl HttpServer {
                             let h3_conn = h3_quinn::Connection::new(connection);
                             let mut h3: h3::server::Connection<_, Bytes> = h3::server::Connection::new(h3_conn).await?;
                             
-                            while let Ok(Some((req, mut send))) = h3.accept().await {
+                            while let Ok(Some((req, stream))) = h3.accept().await {
                                 let path = req.uri().path().to_string();
                                 let method = req.method().clone();
                                 let headers = req.headers().clone();
@@ -71,7 +71,15 @@ impl HttpServer {
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
-                                let request = Request::from_parts(req.into_parts().0, Body::empty());
+                                // Read the request body
+                                let mut body = Vec::new();
+                                while let Ok(Some(chunk)) = stream.recv_data().await {
+                                    body.extend_from_slice(chunk.chunk());
+                                }
+                                let request = Request::from_parts(
+                                    req.into_parts().0,
+                                    Body::from(body)
+                                );
                                 println!("Routing request to axum app...");
                                 let response = app.call(request).await;
                                 match response {
@@ -81,7 +89,7 @@ impl HttpServer {
                                         println!("Response headers: {:?}", parts.headers);
                                         let h3_response = http::Response::from_parts(parts, ());
                                         println!("Sending HTTP/3 response headers...");
-                                        send.send_response(h3_response).await?;
+                                        stream.send_response(h3_response).await?;
                                         
                                         // Convert axum body to bytes
                                         println!("Converting response body...");
@@ -91,7 +99,7 @@ impl HttpServer {
                                                 if let Ok(data) = frame.into_data() {
                                                     println!("Converted to data: {:?}", String::from_utf8_lossy(&data));
                                                     println!("Sending response data ({} bytes)...", data.len());
-                                                    send.send_data(data.into()).await?;
+                                                    stream.send_data(data.into()).await?;
                                                     println!("Response data sent successfully");
                                                 } else {
                                                     println!("Failed to convert frame to data");
@@ -114,11 +122,11 @@ impl HttpServer {
                                             .header("content-type", "text/plain")
                                             .header("content-length", error_body.len().to_string())
                                             .body(())?;
-                                        send.send_response(response).await?;
-                                        send.send_data(error_body.into()).await?;
+                                        stream.send_response(response).await?;
+                                        stream.send_data(error_body.into()).await?;
                                     }
                                 }
-                                send.finish().await?;
+                                stream.finish().await?;
                             }
                         }
                             Ok(())
