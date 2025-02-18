@@ -260,15 +260,23 @@ impl Filesystem for QuicFS {
 
         match server_entries {
             Ok(dir_list) => {
-                // Add server entries to our vector
-                for entry in dir_list.entries {
-                    let file_type = match entry.type_.as_str() {
-                        "file" => FileType::RegularFile,
-                        "dir" => FileType::Directory,
-                        _ => continue,
-                    };
-                    entries.push((self.next_inode, file_type, entry.name.as_str()));
-                }
+                // Collect names into owned strings first
+                let mut file_entries: Vec<(u64, FileType, String)> = dir_list.entries
+                    .into_iter()
+                    .filter_map(|entry| {
+                        let file_type = match entry.type_.as_str() {
+                            "file" => FileType::RegularFile,
+                            "dir" => FileType::Directory,
+                            _ => return None,
+                        };
+                        Some((self.next_inode, file_type, entry.name))
+                    })
+                    .collect();
+
+                // Add all entries to our vector
+                entries.extend(file_entries.iter().map(|(ino, ft, name)| 
+                    (*ino, *ft, name.as_str())
+                ));
 
                 // Handle offset and add entries
                 for (i, (ino, file_type, name)) in entries.iter().enumerate().skip(offset as usize) {
