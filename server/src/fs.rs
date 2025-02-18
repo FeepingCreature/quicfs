@@ -22,7 +22,9 @@ impl FileSystem {
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
-        let full_path = self.root.join(path.trim_start_matches('/'));
+        // Remove both /dir prefix and leading slash, then join with root
+        let clean_path = path.trim_start_matches("/dir").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
         let mut entries = Vec::new();
 
         let mut dir = fs::read_dir(&full_path).await?;
