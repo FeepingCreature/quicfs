@@ -77,8 +77,14 @@ impl HttpServer {
                                         send.send_response(h3_response).await?;
                                         
                                         // Convert axum body to bytes
-                                        if let Some(data) = body.frame().await? {
-                                            send.send_data(data.into_data()?.into()).await?;
+                                        match body.frame().await {
+                                            Ok(Some(frame)) => {
+                                                if let Ok(data) = frame.into_data() {
+                                                    send.send_data(data.into()).await?;
+                                                }
+                                            }
+                                            Ok(None) => (),
+                                            Err(e) => return Err(anyhow::anyhow!("Body error: {}", e)),
                                         }
                                     },
                                     Err(e) => {
