@@ -10,9 +10,10 @@ use std::time::{Duration, SystemTime};
 use tracing::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
-use quicfs_common::types::{DirEntry, DirList};
+use quicfs_common::types::DirList;
+use futures::future;
 use http::Request;
-use quinn::rustls::{self, ClientConfig};
+use bytes::Buf;
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -84,7 +85,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    send_request: h3::client::SendRequest<h3_quinn::Connection, bytes::Bytes>,
+    send_request: h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>,
     inodes: HashMap<u64, FileAttr>,
     next_inode: u64,
     server_url: String,
@@ -107,7 +108,7 @@ impl QuicFS {
 
         let mut body = Vec::new();
         while let Some(chunk) = stream.recv_data().await? {
-            body.extend_from_slice(&chunk);
+            body.extend_from_slice(chunk.chunk());
         }
 
         let dir_list: DirList = serde_json::from_slice(&body)?;
@@ -143,7 +144,7 @@ impl QuicFS {
 
         // Spawn the connection driver
         tokio::spawn(async move {
-            if let Err(e) = driver.drive() {
+            if let Err(e) = future::poll_fn(|cx| driver.poll_close(cx)).await {
                 tracing::error!("Connection driver error: {}", e);
             }
         });
