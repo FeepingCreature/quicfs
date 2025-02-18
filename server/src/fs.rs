@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use std::os::unix::fs::PermissionsExt;
 use anyhow::Result;
 use quicfs_common::types::{DirList, DirEntry};
@@ -87,34 +88,22 @@ impl FileSystem {
     pub async fn write_file(&self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
         let full_path = self.root.join(clean_path);
-        println!("Writing file to: {:?} at offset {} with {} bytes", full_path, offset, contents.len());
         
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).await?;
         }
 
-        // Read existing file if it exists
-        let mut contents = if full_path.exists() {
-            fs::read(&full_path).await?
-        } else {
-            Vec::new()
-        };
-
-        // Ensure the vector is large enough
-        if offset as usize + contents.len() > contents.len() {
-            contents.resize(offset as usize + contents.len(), 0);
-        }
-
-        // Write the new data at the specified offset
-        let mut new_contents = contents.clone();
-        if offset as usize + contents.len() > new_contents.len() {
-            new_contents.resize(offset as usize + contents.len(), 0);
-        }
-        new_contents[offset as usize..offset as usize + contents.len()]
-            .copy_from_slice(&contents);
-        contents = new_contents;
-
-        println!("Final file size will be: {} bytes", contents.len());
-        fs::write(&full_path, contents).await.map_err(Into::into)
+        // Open file for writing, creating it if it doesn't exist
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&full_path)
+            .await?;
+        
+        // Seek to offset and write contents
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.write_all(contents).await?;
+        
+        Ok(())
     }
 }
