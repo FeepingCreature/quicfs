@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    Request as FuseRequest,
+    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, 
+    ReplyEntry, Request as FuseRequest,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
