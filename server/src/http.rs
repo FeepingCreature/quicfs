@@ -4,6 +4,7 @@ use axum::{
     routing::{get, patch},
     Router,
 };
+use tower_service::Service;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{fs::FileSystem, routes};
@@ -48,7 +49,7 @@ impl HttpServer {
             match connection {
                 Some(conn) => {
                     println!("New QUIC connection incoming, awaiting handshake...");
-                    tokio::spawn(async move {
+                    tokio::spawn(async move -> Result<()> {
                         if let Ok(connection) = conn.await {
                             println!("QUIC connection established from {}", 
                                 connection.remote_address());
@@ -62,6 +63,7 @@ impl HttpServer {
                                 let headers = req.headers().clone();
                                 
                                 // Use app to route the request
+                                let mut app = app.clone();
                                 let response = app.call(req).await;
                                 match response {
                                     Ok(response) => {
@@ -87,6 +89,7 @@ impl HttpServer {
                                 send.finish().await?;
                             }
                         }
+                        Ok(())
                     });
                 }
                 None => println!("No QUIC connection available"),
