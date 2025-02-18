@@ -69,8 +69,10 @@ pub async fn write_file(
     // Parse and validate Content-Range header
     let (offset, expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
         Some(range) => {
+            println!("Parsing Content-Range header: {}", range);
             if let Some(range) = range.strip_prefix("bytes ") {
                 let parts: Vec<&str> = range.split('/').collect();
+                println!("Split parts: {:?}", parts);
                 if parts.len() != 2 {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": "Invalid Content-Range format"
@@ -78,6 +80,7 @@ pub async fn write_file(
                 }
                 
                 let range_parts: Vec<&str> = parts[0].split('-').collect();
+                println!("Range parts: {:?}", range_parts);
                 if range_parts.len() != 2 {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": "Invalid Content-Range format"
@@ -113,6 +116,7 @@ pub async fn write_file(
 
                 // For a range like "0-0/0", we want length 0
                 let expected_len = if end >= start { end - start + 1 } else { 0 };
+                println!("Calculated expected_len={} from start={}, end={}", expected_len, start, end);
                 if bytes.len() as u64 != expected_len {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": format!("Content length mismatch: expected {} bytes but got {} (range: {}-{}/{})", 
