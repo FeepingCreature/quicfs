@@ -99,7 +99,7 @@ impl QuicFS {
             .uri(format!("{}/file{}", self.server_url, path))
             .header("Content-Range", format!("bytes {}-{}/{}", 
                 offset, 
-                offset + data.len() as u64 - 1,
+                offset + (data.len() as u64).saturating_sub(1),
                 offset + data.len() as u64))
             .body(bytes::Bytes::copy_from_slice(data))?;
 
