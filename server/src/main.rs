@@ -1,5 +1,5 @@
 use anyhow::Result;
-use quinn::{Endpoint, ServerConfig};
+use quinn::{Endpoint, ServerConfig, ConnectionError};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::fs;
@@ -38,11 +38,19 @@ async fn main() -> Result<()> {
                         println!("Connection established from {}", connection.remote_address());
                         // Handle connection in a new task
                         tokio::spawn(async move {
-                            while let Ok(Ok((mut send, _recv))) = connection.accept_bi().await {
-                                println!("New stream established");
-                                // Here you would implement the actual file serving logic
-                                // This is just a placeholder that acknowledges the stream
-                                let _ = send.write_all(b"Hello from Quinn server!").await;
+                            while let Ok(stream) = connection.accept_bi().await {
+                                match stream {
+                                    Ok((mut send, _recv)) => {
+                                        println!("New stream established");
+                                        // Here you would implement the actual file serving logic
+                                        // This is just a placeholder that acknowledges the stream
+                                        let _ = send.write_all(b"Hello from Quinn server!").await;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Stream failed: {}", e);
+                                        break;
+                                    }
+                                }
                             }
                         });
                     }
