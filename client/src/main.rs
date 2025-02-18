@@ -88,6 +88,7 @@ const ROOT_INODE: u64 = 1;
 struct QuicFS {
     send_request: h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>,
     inodes: HashMap<u64, FileAttr>,
+    paths: HashMap<u64, String>,
     next_inode: u64,
     server_url: String,
 }
@@ -215,6 +216,7 @@ impl QuicFS {
         let mut fs = QuicFS {
             send_request,
             inodes: HashMap::new(),
+            paths: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
             server_url,
         };
@@ -337,8 +339,9 @@ impl Filesystem for QuicFS {
                         }
                     };
 
+                    let ino = self.next_inode;
                     let attr = FileAttr {
-                        ino: self.next_inode,
+                        ino,
                         size: entry.size,
                         blocks: (entry.size + 511) / 512,
                         atime: SystemTime::now(),
@@ -355,7 +358,9 @@ impl Filesystem for QuicFS {
                         blksize: 512,
                     };
 
-                    self.inodes.insert(self.next_inode, attr);
+                    // Store both the attributes and the path
+                    self.paths.insert(ino, format!("/{}", entry.name));
+                    self.inodes.insert(ino, attr);
                     self.next_inode += 1;
                     reply.entry(&TTL, &attr, 0);
                 } else {
@@ -409,11 +414,8 @@ impl Filesystem for QuicFS {
         // Make request to server
         let read_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                // Find the file path from the inode
-                let path = self.inodes.iter()
-                    .find(|(i, attr)| *i == &ino && attr.kind == FileType::RegularFile)
-                    .map(|(_, _)| "/hello.txt")  // TODO: Store actual paths
-                    .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+                // For now, just use the name from the parent directory listing
+                let path = format!("/{}", name.to_string_lossy());
                 
                 self.read_file(path, offset as u64, _size).await
             })
@@ -524,11 +526,9 @@ impl Filesystem for QuicFS {
         // Make request to server
         let write_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                // Find the file path from the inode
-                let path = self.inodes.iter()
-                    .find(|(i, attr)| *i == &ino && attr.kind == FileType::RegularFile)
-                    .map(|(_, _)| "/hello.txt")  // TODO: Store actual paths
-                    .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+                // Get the stored path for this inode
+                let path = self.paths.get(&ino)
+                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?;
                 
                 self.write_file(path, offset as u64, data).await
             })
