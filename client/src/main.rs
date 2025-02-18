@@ -117,10 +117,13 @@ impl QuicFS {
     }
 
     async fn new(server_url: String) -> Result<Self> {
+        info!("Creating new QuicFS instance");
+        
         // Parse server URL and connect
         let url = server_url.parse::<http::Uri>()?;
-        let host = url.host().unwrap();
+        let host = url.host().unwrap_or("localhost");
         let port = url.port_u16().unwrap_or(4433);
+        info!("Connecting to {}:{}", host, port);
         
         let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
         
@@ -186,10 +189,11 @@ impl QuicFS {
 
 impl Filesystem for QuicFS {
     fn lookup(&mut self, _req: &FuseRequest, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        info!("lookup: {} in {}", name.to_string_lossy(), parent);
+        info!("lookup: {} in {} (pid: {})", name.to_string_lossy(), parent, _req.pid());
         
         // For now, only handle root directory
         if parent != ROOT_INODE {
+            info!("lookup: rejecting non-root parent inode {}", parent);
             reply.error(ENOENT);
             return;
         }
@@ -287,13 +291,31 @@ async fn main() -> Result<()> {
     
     info!("Mounting QuicFS at {} with server {}", opts.mountpoint, opts.server);
     
+    // Ensure mount point exists
+    if !std::path::Path::new(&opts.mountpoint).exists() {
+        info!("Creating mount point directory");
+        std::fs::create_dir_all(&opts.mountpoint)?;
+    }
+    
+    info!("Initializing QuicFS...");
     let fs = QuicFS::new(opts.server).await?;
+    info!("QuicFS initialized successfully");
     
-    fuser::mount2(
+    info!("Attempting to mount filesystem...");
+    match fuser::mount2(
         fs,
-        opts.mountpoint,
+        &opts.mountpoint,
         &[MountOption::RO, MountOption::FSName("quicfs".to_string())],
-    )?;
-    
-    Ok(())
+    ) {
+        Ok(_) => {
+            info!("Filesystem mounted successfully");
+            // The mount call is blocking, so we'll only get here after unmounting
+            info!("Filesystem unmounted");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Failed to mount filesystem: {}", e);
+            Err(e.into())
+        }
+    }
 }
