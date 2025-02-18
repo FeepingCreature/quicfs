@@ -3,8 +3,10 @@ use anyhow::Result;
 use axum::{
     routing::{get, patch},
     Router,
+    body::{Body, Bytes},
 };
 use tower::Service;
+use http_body_util::BodyExt;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{fs::FileSystem, routes};
@@ -65,18 +67,18 @@ impl HttpServer {
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
-                                let response = app.call(req).await;
+                                let request = Request::from_parts(req.into_parts().0, Body::empty());
+                                let response = app.call(request).await;
                                 match response {
                                     Ok(response) => {
                                         let (parts, body) = response.into_parts();
                                         let h3_response = http::Response::from_parts(parts, ());
                                         send.send_response(h3_response).await?;
                                         
-                                        // Send body if any
-                                        if let Some(body) = body.data().await {
-                                            if let Ok(data) = body {
-                                                send.send_data(data).await?;
-                                            }
+                                        // Collect and send body
+                                        let body_bytes = body.collect().await?.to_bytes();
+                                        if !body_bytes.is_empty() {
+                                            send.send_data(body_bytes.into()).await?;
                                         }
                                     },
                                     Err(e) => {
