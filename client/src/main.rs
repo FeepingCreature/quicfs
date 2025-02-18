@@ -102,9 +102,9 @@ impl QuicFS {
                 offset, 
                 offset + (contents.len() as u64).saturating_sub(1),
                 offset + contents.len() as u64))
-            .body(bytes::Bytes::copy_from_slice(contents))?;
+            .body(())?;
 
-        let mut stream = self.send_request.send_request(req.map(|_| ())).await?;
+        let mut stream = self.send_request.send_request(req).await?;
         stream.send_data(bytes::Bytes::copy_from_slice(contents)).await?;
         stream.finish().await?;
 

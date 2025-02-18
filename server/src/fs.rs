@@ -111,7 +111,7 @@ impl FileSystem {
             new_contents.resize(offset as usize + contents.len(), 0);
         }
         new_contents[offset as usize..offset as usize + contents.len()]
-            .copy_from_slice(contents);
+            .copy_from_slice(&contents);
         contents = new_contents;
 
         println!("Final file size will be: {} bytes", contents.len());
