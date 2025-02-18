@@ -107,7 +107,7 @@ impl FileSystem {
 
         // Write the new data at the specified offset
         contents[offset as usize..offset as usize + contents.len()]
-            .copy_from_slice(contents);
+            .copy_from_slice(&contents);
 
         println!("Final file size will be: {} bytes", contents.len());
         fs::write(&full_path, contents).await.map_err(Into::into)
