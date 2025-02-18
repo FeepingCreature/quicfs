@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, 
-    ReplyEntry, Request as FuseRequest,
+    ReplyEntry, Request as FuseRequest, TimeOrNow,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -498,6 +498,69 @@ impl Filesystem for QuicFS {
                 reply.error(libc::EIO);
             }
         }
+    }
+
+    fn setattr(
+        &mut self,
+        _req: &FuseRequest,
+        ino: u64,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
+        atime: Option<TimeOrNow>,
+        mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
+        fh: Option<u64>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        flags: Option<u32>,
+        reply: ReplyAttr,
+    ) {
+        info!("setattr: {} mode={:?} uid={:?} gid={:?} size={:?}", ino, mode, uid, gid, size);
+
+        // Get the current attributes
+        let mut attr = match self.inodes.get(&ino).cloned() {
+            Some(attr) => attr,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        // Update the attributes
+        if let Some(mode) = mode {
+            attr.perm = mode as u16;
+        }
+        if let Some(uid) = uid {
+            attr.uid = uid;
+        }
+        if let Some(gid) = gid {
+            attr.gid = gid;
+        }
+        if let Some(size) = size {
+            attr.size = size;
+        }
+        if let Some(atime) = atime {
+            attr.atime = match atime {
+                TimeOrNow::Now => SystemTime::now(),
+                TimeOrNow::SpecificTime(time) => time,
+            };
+        }
+        if let Some(mtime) = mtime {
+            attr.mtime = match mtime {
+                TimeOrNow::Now => SystemTime::now(),
+                TimeOrNow::SpecificTime(time) => time,
+            };
+        }
+        if let Some(flags) = flags {
+            attr.flags = flags;
+        }
+
+        // Store updated attributes
+        self.inodes.insert(ino, attr);
+        reply.attr(&TTL, &attr);
     }
 
     fn write(
