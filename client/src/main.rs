@@ -30,7 +30,7 @@ struct Opts {
 // Temporary certificate verification skip for development
 struct SkipServerVerification;
 
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
+impl quinn::rustls::client::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
         _end_entity: &rustls::Certificate,
