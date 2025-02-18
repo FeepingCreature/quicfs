@@ -125,7 +125,7 @@ impl QuicFS {
 }
 
 impl Filesystem for QuicFS {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, _req: &FuseRequest, parent: u64, name: &OsStr, reply: ReplyEntry) {
         info!("lookup: {} in {}", name.to_string_lossy(), parent);
         
         // For now, only handle root directory
@@ -144,7 +144,7 @@ impl Filesystem for QuicFS {
         reply.error(ENOENT);
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, _req: &FuseRequest, ino: u64, reply: ReplyAttr) {
         info!("getattr: {}", ino);
         
         match self.inodes.get(&ino) {
@@ -155,7 +155,7 @@ impl Filesystem for QuicFS {
 
     fn read(
         &mut self,
-        _req: &Request,
+        _req: &FuseRequest,
         ino: u64,
         _fh: u64,
         offset: i64,
@@ -170,7 +170,7 @@ impl Filesystem for QuicFS {
 
     fn readdir(
         &mut self,
-        _req: &Request,
+        _req: &FuseRequest,
         ino: u64,
         _fh: u64,
         offset: i64,
