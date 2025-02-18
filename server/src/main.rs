@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use quicfs_server::{fs::FileSystem, http::HttpServer};
-use http::HttpServer;
+use quicfs_server::http::HttpServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {

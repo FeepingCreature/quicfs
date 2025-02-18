@@ -402,7 +402,7 @@ impl Filesystem for QuicFS {
         match server_entries {
             Ok(dir_list) => {
                 // Collect names into owned strings first
-                let mut file_entries: Vec<(u64, FileType, String)> = dir_list.entries
+                let file_entries: Vec<(u64, FileType, String)> = dir_list.entries
                     .into_iter()
                     .filter_map(|entry| {
                         let file_type = match entry.type_.as_str() {
