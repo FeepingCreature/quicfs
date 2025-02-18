@@ -61,6 +61,8 @@ pub async fn write_file(
     Path(path): Path<String>,
     bytes: Bytes,
 ) -> impl IntoResponse {
+    println!("Write request received for path: /file/{}", path);
+    println!("Received {} bytes of data", bytes.len());
     match fs.write_file(&format!("/file/{}", path), &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (
