@@ -133,12 +133,21 @@ async fn handle_connection(connection: Option<quinn::Connecting>) {
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
-                        while let Ok((mut send, _recv)) = connection.accept_bi().await {
+                        while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                             println!("New QUIC stream established");
-                            // Here you would implement the actual file serving logic
-                            // This is just a placeholder that acknowledges the stream
-                            match send.write_all(b"Hello from Quinn server!").await {
-                                Ok(_) => println!("Sent hello message on stream"),
+                            
+                            // Basic HTTP/3 response
+                            let response = "HTTP/3 200 OK\r\n\
+                                         Content-Length: 13\r\n\
+                                         Content-Type: text/plain\r\n\
+                                         \r\n\
+                                         Hello World!\n";
+                            
+                            match send.write_all(response.as_bytes()).await {
+                                Ok(_) => {
+                                    println!("Sent HTTP/3 response");
+                                    send.finish().await.unwrap_or_else(|e| eprintln!("Failed to finish stream: {}", e));
+                                },
                                 Err(e) => eprintln!("Failed to send on stream: {}", e),
                             }
                         }
