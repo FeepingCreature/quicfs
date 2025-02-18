@@ -11,7 +11,8 @@ use http_body_util::BodyExt;
 use bytes::Bytes;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use crate::{fs::FileSystem, routes};
+use crate::fs::FileSystem;
+use crate::routes;
 
 pub struct HttpServer {
     endpoint: Endpoint,
