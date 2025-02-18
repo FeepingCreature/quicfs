@@ -2,7 +2,12 @@ use anyhow::Result;
 use axum::{
     routing::get,
     Router,
+    http::HeaderValue,
+    response::Response,
+    middleware::{self, Next},
 };
+use axum::body::Body;
+use axum::http::Request;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -37,7 +42,8 @@ async fn main() -> Result<()> {
     let https_addr = "0.0.0.0:8443".parse::<SocketAddr>()?;
     let app = Router::new()
         .route("/files/*path", get(handle_get).put(handle_put))
-        .layer(CorsLayer::permissive());
+        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(add_alt_svc_header));
 
     println!("HTTPS server listening on {}", https_addr);
 
@@ -93,6 +99,18 @@ async fn handle_put(
         Ok(_) => Ok(()),
         Err(e) => Err(format!("Failed to write file: {}", e))
     }
+}
+
+async fn add_alt_svc_header(
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        "alt-svc",
+        HeaderValue::from_static("h3=\":4433\"; ma=3600")
+    );
+    response
 }
 
 async fn handle_connection(connection: Option<quinn::Connecting>) {
