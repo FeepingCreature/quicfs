@@ -1,10 +1,10 @@
 use anyhow::Result;
 use axum::{
-    routing::{get, put},
+    routing::get,
     Router,
 };
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
         cert_chain[0].0.clone(),
         priv_key.0.clone(),
     )
+    .await
     .expect("Failed to create HTTPS config");
 
     tokio::spawn(async move {
