@@ -16,10 +16,20 @@ async fn main() -> Result<()> {
     // Create server config
     let server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
     
-    // Create endpoint
+    // Create endpoint with explicit socket configuration
     let addr = "[::]:4433".parse::<SocketAddr>()?;
+    let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
+    server_config.use_stateless_retry(true);
+    
     let endpoint = Endpoint::server(server_config, addr)?;
     println!("Listening on {} (IPv4 and IPv6)", addr);
+    
+    // Verify we're actually listening
+    if let Some(local_addr) = endpoint.local_addr() {
+        println!("Server socket bound to {}", local_addr);
+    } else {
+        eprintln!("Failed to get local address!");
+    }
 
     // Serve directory
     let serve_dir = PathBuf::from("served_files");
