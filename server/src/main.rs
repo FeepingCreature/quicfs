@@ -11,7 +11,6 @@ use axum::http::Request;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
 
@@ -28,8 +27,8 @@ async fn main() -> Result<()> {
     let cert_chain = vec![rustls::Certificate(cert_der)];
 
     // Create QUIC server config
-    let mut quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
-    let mut endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
+    let quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
+    let endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
     
     println!("QUIC server config created");
     
@@ -122,9 +121,8 @@ async fn handle_connection(connection: Option<quinn::Connecting>) {
             let connecting = conn.await;
             match connecting {
                 Ok(connection) => {
-                    println!("QUIC connection established from {} with protocol: {:?}", 
-                        connection.remote_address(),
-                        connection.protocol());
+                    println!("QUIC connection established from {}", 
+                        connection.remote_address());
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
