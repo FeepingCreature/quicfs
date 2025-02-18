@@ -40,7 +40,6 @@ impl HttpServer {
 
         // Create router with routes
         let app = Router::new()
-            .route("/dir", get(crate::routes::list_directory))
             .route("/dir/", get(crate::routes::list_directory))
             .route("/dir/*path", get(crate::routes::list_directory))
             .route("/file/*path", get(crate::routes::read_file))

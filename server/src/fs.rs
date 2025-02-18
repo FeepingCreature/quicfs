@@ -85,7 +85,9 @@ impl FileSystem {
     }
 
     pub async fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
-        let full_path = self.root.join(path.trim_start_matches('/'));
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        println!("Writing file to: {:?}", full_path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).await?;
         }
