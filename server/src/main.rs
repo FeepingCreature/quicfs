@@ -46,27 +46,24 @@ async fn main() -> Result<()> {
 
 async fn handle_connection(connection: Option<quinn::Connecting>) {
     match connection {
-            Some(conn) => {
-                let connecting = conn.await;
-                match connecting {
-                    Ok(connection) => {
-                        println!("Connection established from {}", connection.remote_address());
-                        // Handle connection in a new task
-                        tokio::spawn(async move {
-                            while let Ok((mut send, _recv)) = connection.accept_bi().await {
-                                println!("New stream established");
-                                // Here you would implement the actual file serving logic
-                                // This is just a placeholder that acknowledges the stream
-                                let _ = send.write_all(b"Hello from Quinn server!").await;
-                            }
-                        });
-                    }
-                    Err(e) => eprintln!("Connection failed: {}", e),
+        Some(conn) => {
+            let connecting = conn.await;
+            match connecting {
+                Ok(connection) => {
+                    println!("Connection established from {}", connection.remote_address());
+                    // Handle connection in a new task
+                    tokio::spawn(async move {
+                        while let Ok((mut send, _recv)) = connection.accept_bi().await {
+                            println!("New stream established");
+                            // Here you would implement the actual file serving logic
+                            // This is just a placeholder that acknowledges the stream
+                            let _ = send.write_all(b"Hello from Quinn server!").await;
+                        }
+                    });
                 }
+                Err(e) => eprintln!("Connection failed: {}", e),
             }
-            None => break,
         }
+        None => (),
     }
-
-    Ok(())
 }
