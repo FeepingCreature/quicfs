@@ -361,6 +361,7 @@ impl Filesystem for QuicFS {
                     // Store both the attributes and the path
                     self.paths.insert(ino, format!("/{}", entry.name));
                     self.inodes.insert(ino, attr);
+                    info!("Mapped inode {} to path {}", ino, format!("/{}", entry.name));
                     self.next_inode += 1;
                     reply.entry(&TTL, &attr, 0);
                 } else {
@@ -509,6 +510,7 @@ impl Filesystem for QuicFS {
         reply: fuser::ReplyWrite,
     ) {
         info!("write: {} at offset {} size {}", ino, offset, data.len());
+        info!("Known paths: {:?}", self.paths);
         
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
