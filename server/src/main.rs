@@ -14,6 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
+use h3_quinn;
+use bytes;
+use http;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -133,28 +136,22 @@ async fn handle_connection(connection: Option<quinn::Connecting>) {
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
-                        while let Ok((mut send, mut recv)) = connection.accept_bi().await {
-                            println!("New QUIC stream established");
+                        let h3_conn = h3_quinn::Connection::new(connection);
+                        println!("Starting HTTP/3 connection handling");
+                        
+                        while let Ok(Some((req, mut sender))) = h3_conn.accept().await {
+                            println!("New HTTP/3 request: {:?}", req);
                             
-                            // HTTP/3 response with proper formatting
-                            let response = b"HTTP/3 200 OK\r\n\
-                                Content-Length: 13\r\n\
-                                Content-Type: text/plain\r\n\
-                                Connection: close\r\n\
-                                \r\n\
-                                Hello World!\n";
+                            // Create HTTP response
+                            let response = http::Response::builder()
+                                .status(200)
+                                .header("content-type", "text/plain")
+                                .body(bytes::Bytes::from("Hello World!\n"))
+                                .unwrap();
                             
-                            if let Err(e) = send.write_all(response).await {
-                                eprintln!("Failed to send response: {}", e);
-                                continue;
+                            if let Err(e) = sender.send_response(response).await {
+                                eprintln!("Failed to send HTTP/3 response: {}", e);
                             }
-                            
-                            if let Err(e) = send.finish().await {
-                                eprintln!("Failed to finish stream: {}", e);
-                            }
-                            
-                            // Close the receiving side as well
-                            recv.stop(0u8.into());
                         }
                         println!("Connection stream loop ended");
                     });
