@@ -8,7 +8,8 @@ use axum::{
 };
 use axum::body::Body;
 use axum::http::Request;
-use quinn::{self, Endpoint, crypto::rustls::QuicServerConfig};
+use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
+use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,14 +25,13 @@ async fn main() -> Result<()> {
     
     // For QUIC server (needs DER format)
     let cert_der = cert.serialize_der()?;
-    let priv_key = rustls::PrivateKey(cert.serialize_private_key_der());
-    let cert_chain = vec![rustls::Certificate(cert_der)];
+    let priv_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()));
+    let cert_chain = vec![CertificateDer::from(cert_der)];
 
     // Create QUIC server config with ALPN protocols for HTTP/3
-    let mut server_crypto = rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    let mut server_crypto = quinn::rustls::ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert(cert_chain.clone(), priv_key.clone())?;
+        .with_single_cert(cert_chain.clone(), priv_key)?;
     server_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
