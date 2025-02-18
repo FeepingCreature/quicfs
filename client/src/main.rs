@@ -30,7 +30,7 @@ struct Opts {
 }
 
 #[derive(Debug)]
-struct SkipServerVerification(Arc<rustls::crypto::ring::CryptoProvider>);
+struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
@@ -141,7 +141,7 @@ impl QuicFS {
         let connection = endpoint.connect(addr, host)?.await?;
             
         let h3_conn = h3_quinn::Connection::new(connection);
-        let (driver, send_request) = h3::client::new(h3_conn).await?;
+        let (mut driver, send_request) = h3::client::new(h3_conn).await?;
 
         // Spawn the connection driver
         tokio::spawn(async move {
