@@ -280,8 +280,11 @@ impl Filesystem for QuicFS {
             blksize: 512,
         };
 
-        // Store the inode
+        // Store the inode and path
         self.inodes.insert(ino, attr);
+        let path = format!("/{}", name.to_string_lossy());
+        self.paths.insert(ino, path.clone());
+        info!("Created inode {} with path {}", ino, path);
 
         // Create empty file on server
         let create_result = tokio::task::block_in_place(|| {
