@@ -16,14 +16,10 @@ async fn main() -> Result<()> {
     // Create server config
     let server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
     
-    // Create endpoints
-    let addr_v6 = "[::]:4433".parse::<SocketAddr>()?;
-    let addr_v4 = "0.0.0.0:4433".parse::<SocketAddr>()?;
-    
-    let endpoint_v6 = Endpoint::server(server_config.clone(), addr_v6)?;
-    let endpoint_v4 = Endpoint::server(server_config, addr_v4)?;
-    
-    println!("Listening on {} and {}", addr_v6, addr_v4);
+    // Create endpoint
+    let addr = "[::]:4433".parse::<SocketAddr>()?;
+    let endpoint = Endpoint::server(server_config, addr)?;
+    println!("Listening on {} (IPv4 and IPv6)", addr);
 
     // Serve directory
     let serve_dir = PathBuf::from("served_files");
@@ -33,14 +29,8 @@ async fn main() -> Result<()> {
     }
 
     loop {
-        tokio::select! {
-            connection = endpoint_v6.accept() => {
-                handle_connection(connection).await;
-            }
-            connection = endpoint_v4.accept() => {
-                handle_connection(connection).await;
-            }
-        }
+        let connection = endpoint.accept().await;
+        handle_connection(connection).await;
     }
 }
 
