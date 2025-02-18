@@ -323,7 +323,13 @@ impl Filesystem for QuicFS {
         // Make request to server
         let read_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.read_file("/hello.txt", offset as u64, _size).await
+                // Find the file path from the inode
+                let path = self.inodes.iter()
+                    .find(|(i, attr)| *i == &ino && attr.kind == FileType::RegularFile)
+                    .map(|(_, _)| "/hello.txt")  // TODO: Store actual paths
+                    .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+                
+                self.read_file(path, offset as u64, _size).await
             })
         });
 

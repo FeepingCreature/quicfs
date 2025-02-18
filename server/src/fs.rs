@@ -60,7 +60,9 @@ impl FileSystem {
     }
 
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
-        let full_path = self.root.join(path.trim_start_matches('/'));
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        println!("Reading file: {:?}", full_path);
         fs::read(&full_path).await.map_err(Into::into)
     }
 
