@@ -24,6 +24,8 @@ struct Opts {
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use quicfs_common::types::{DirEntry, DirList};
+use http::{Request, Response};
 
 // Temporary certificate verification skip for development
 struct SkipServerVerification;
@@ -52,6 +54,24 @@ struct QuicFS {
 }
 
 impl QuicFS {
+    async fn list_directory(&mut self, path: &str) -> Result<DirList> {
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("{}/dir{}", self.server_url, path))
+            .body(())?;
+
+        let mut resp = self.client.send_request(req).await?;
+        let (parts, body) = resp.into_parts();
+        
+        if !parts.status.is_success() {
+            return Err(anyhow::anyhow!("Server returned error: {}", parts.status));
+        }
+
+        let body = h3::client::read_body(body).await?;
+        let dir_list: DirList = serde_json::from_slice(&body)?;
+        Ok(dir_list)
+    }
+
     async fn new(server_url: String) -> Result<Self> {
         // Parse server URL and connect
         let url = server_url.parse::<http::Uri>()?;
@@ -161,14 +181,39 @@ impl Filesystem for QuicFS {
         }
 
         // Standard directory entries
+        let mut idx = 1;
         if offset == 0 {
-            reply.add(ROOT_INODE, 1, FileType::Directory, ".");
-            reply.add(ROOT_INODE, 2, FileType::Directory, "..");
+            reply.add(ROOT_INODE, idx, FileType::Directory, ".");
+            idx += 1;
+            reply.add(ROOT_INODE, idx, FileType::Directory, "..");
+            idx += 1;
         }
 
-        // TODO: Fetch directory contents from server
-        // For now, just return the standard entries
-        reply.ok();
+        // Fetch directory contents from server
+        let entries = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.list_directory("/").await
+            })
+        });
+
+        match entries {
+            Ok(dir_list) => {
+                for entry in dir_list.entries {
+                    let file_type = match entry.type_.as_str() {
+                        "file" => FileType::RegularFile,
+                        "dir" => FileType::Directory,
+                        _ => continue,
+                    };
+                    reply.add(self.next_inode + idx, idx as i64, file_type, entry.name);
+                    idx += 1;
+                }
+                reply.ok();
+            }
+            Err(e) => {
+                warn!("Failed to list directory: {}", e);
+                reply.error(libc::EIO);
+            }
+        }
     }
 }
 
