@@ -11,6 +11,7 @@ use axum::http::Request;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
 
@@ -27,11 +28,16 @@ async fn main() -> Result<()> {
     let cert_chain = vec![rustls::Certificate(cert_der)];
 
     // Create QUIC server config
-    let quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
+    let mut quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
+    let mut endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
     
-    // Create QUIC endpoint
-    let quic_addr = "0.0.0.0:4433".parse::<SocketAddr>()?;
-    let endpoint = Endpoint::server(quic_config, quic_addr)?;
+    // Configure endpoint for UDP
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain.clone(), priv_key.clone())?
+    )));
     
     match endpoint.local_addr() {
         Ok(local_addr) => println!("QUIC server bound to {}", local_addr),
