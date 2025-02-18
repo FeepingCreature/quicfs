@@ -111,11 +111,12 @@ pub async fn write_file(
                     }
                 };
 
-                let expected_len = end - start + 1;
+                // For a range like "0-0/0", we want length 0
+                let expected_len = if end >= start { end - start + 1 } else { 0 };
                 if bytes.len() as u64 != expected_len {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                        "error": format!("Content length mismatch: expected {} bytes but got {}", 
-                                       expected_len, bytes.len())
+                        "error": format!("Content length mismatch: expected {} bytes but got {} (range: {}-{}/{})", 
+                                       expected_len, bytes.len(), start, end, total)
                     }))).into_response();
                 }
 
