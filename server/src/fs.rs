@@ -41,7 +41,7 @@ impl FileSystem {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 type_: file_type.to_string(),
                 size: metadata.len(),
-                mode: metadata.permissions().mode(),
+                mode: metadata.permissions().mode() & 0o777,
                 mtime: mtime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
                 atime: atime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
                 ctime: ctime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
