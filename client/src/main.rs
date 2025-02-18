@@ -388,9 +388,15 @@ impl Filesystem for QuicFS {
                     if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == path) {
                         info!("Found existing inode {} for path {}", existing_ino, path);
                         // Reuse existing inode
-                        if let Some(attr) = self.inodes.get(&existing_ino) {
-                            info!("Reusing existing inode {} with size {}", existing_ino, attr.size);
-                            reply.entry(&TTL, attr, 0);
+                        if let Some(mut attr) = self.inodes.get(&existing_ino).cloned() {
+                            info!("Found existing inode {} with old size {}", existing_ino, attr.size);
+                            // Update size from server entry
+                            attr.size = entry.size;
+                            attr.blocks = (entry.size + 511) / 512;
+                            // Update the cache
+                            self.inodes.insert(existing_ino, attr.clone());
+                            info!("Updated existing inode {} with new size {}", existing_ino, attr.size);
+                            reply.entry(&TTL, &attr, 0);
                             return;
                         }
                         info!("Existing inode {} not found in attributes cache", existing_ino);
