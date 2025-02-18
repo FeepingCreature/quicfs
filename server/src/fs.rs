@@ -21,20 +21,34 @@ impl FileSystem {
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
-        // For now return dummy data
-        Ok(DirList {
-            entries: vec![
-                DirEntry {
-                    name: "test.txt".to_string(),
-                    type_: "file".to_string(),
-                    size: 42,
-                    mode: 0o644,
-                    mtime: "2024-02-18T15:04:05Z".to_string(),
-                    atime: "2024-02-18T15:04:05Z".to_string(),
-                    ctime: "2024-02-18T15:04:05Z".to_string(),
-                }
-            ]
-        })
+        let full_path = self.root.join(path.trim_start_matches('/'));
+        let mut entries = Vec::new();
+
+        let mut dir = fs::read_dir(&full_path).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            let metadata = entry.metadata().await?;
+            let file_type = if metadata.is_dir() {
+                "dir"
+            } else {
+                "file"
+            };
+
+            let mtime = metadata.modified()?;
+            let atime = metadata.accessed()?;
+            let ctime = metadata.created()?;
+
+            entries.push(DirEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                type_: file_type.to_string(),
+                size: metadata.len(),
+                mode: metadata.permissions().mode(),
+                mtime: mtime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+                atime: atime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+                ctime: ctime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+            });
+        }
+
+        Ok(DirList { entries })
     }
 
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
