@@ -86,7 +86,7 @@ impl danger::ServerCertVerifier for SkipServerVerification {
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    send_request: h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>,
+    send_request: Option<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>,
     inodes: HashMap<u64, FileAttr>,
     paths: HashMap<u64, String>,
     next_inode: u64,
@@ -104,7 +104,8 @@ impl QuicFS {
                 offset + contents.len() as u64))
             .body(())?;
 
-        let mut stream = self.send_request.send_request(req).await?;
+        self.ensure_connected().await?;
+        let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
         stream.send_data(bytes::Bytes::copy_from_slice(contents)).await?;
         stream.finish().await?;
 
@@ -173,6 +174,54 @@ impl QuicFS {
 
         let dir_list: DirList = serde_json::from_slice(&body)?;
         Ok(dir_list)
+    }
+
+    async fn connect(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
+        info!("Connecting to server...");
+        
+        // Parse server URL and connect
+        let url = self.server_url.parse::<http::Uri>()?;
+        let host = url.host().unwrap_or("localhost");
+        let port = url.port_u16().unwrap_or(4433);
+        info!("Connecting to {}:{}", host, port);
+        
+        let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
+        
+        let mut crypto_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth();
+
+        crypto_config.alpn_protocols = vec![b"h3".to_vec()];
+        crypto_config.enable_early_data = true;
+
+        let client_config = quinn::ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
+        ));
+        endpoint.set_default_client_config(client_config);
+
+        // Force IPv4 lookup
+        let addr = format!("{}:{}", host, port).parse()?;
+        let connection = endpoint.connect(addr, host)?.await?;
+            
+        let h3_conn = h3_quinn::Connection::new(connection);
+        let (mut driver, send_request) = h3::client::new(h3_conn).await?;
+
+        // Spawn the connection driver
+        tokio::spawn(async move {
+            if let Err(e) = future::poll_fn(|cx| driver.poll_close(cx)).await {
+                tracing::error!("Connection driver error: {}", e);
+            }
+        });
+
+        Ok(send_request)
+    }
+
+    async fn ensure_connected(&mut self) -> Result<()> {
+        if self.send_request.is_none() {
+            self.send_request = Some(self.connect().await?);
+        }
+        Ok(())
     }
 
     async fn new(server_url: String) -> Result<Self> {
