@@ -103,7 +103,7 @@ impl QuicFS {
                 offset + data.len() as u64))
             .body(bytes::Bytes::copy_from_slice(data))?;
 
-        let mut stream = self.send_request.send_request(req).await?;
+        let mut stream = self.send_request.send_request(req.map(|_| ())).await?;
         stream.send_data(bytes::Bytes::copy_from_slice(data)).await?;
         stream.finish().await?;
 
@@ -441,7 +441,7 @@ impl Filesystem for QuicFS {
         ino: u64,
         _fh: u64,
         offset: i64,
-         &[u8],
+         data: &[u8],
         _write_flags: u32,
         _flags: i32,
         _lock_owner: Option<u64>,
