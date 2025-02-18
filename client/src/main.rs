@@ -178,8 +178,8 @@ impl QuicFS {
         Ok(dir_list)
     }
 
-    async fn connect(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
-        info!("Connecting to server...");
+    async fn setup_connection(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
+        info!("Setting up QUIC connection...");
         
         // Parse server URL and connect
         let url = self.server_url.parse::<http::Uri>()?;
@@ -219,6 +219,10 @@ impl QuicFS {
         Ok(send_request)
     }
 
+    async fn connect(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
+        self.setup_connection().await
+    }
+
     async fn ensure_connected(&mut self) -> Result<()> {
         if self.send_request.is_none() {
             self.send_request = Some(self.connect().await?);
@@ -229,41 +233,6 @@ impl QuicFS {
     async fn new(server_url: String) -> Result<Self> {
         info!("Creating new QuicFS instance");
         
-        // Parse server URL and connect
-        let url = server_url.parse::<http::Uri>()?;
-        let host = url.host().unwrap_or("localhost");
-        let port = url.port_u16().unwrap_or(4433);
-        info!("Connecting to {}:{}", host, port);
-        
-        let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
-        
-        let mut crypto_config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
-            .with_no_client_auth();
-
-        crypto_config.alpn_protocols = vec![b"h3".to_vec()];
-        crypto_config.enable_early_data = true;
-
-        let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
-        ));
-        endpoint.set_default_client_config(client_config);
-
-        // Force IPv4 lookup
-        let addr = format!("{}:{}", host, port).parse()?;
-        let connection = endpoint.connect(addr, host)?.await?;
-            
-        let h3_conn = h3_quinn::Connection::new(connection);
-        let (mut driver, send_request) = h3::client::new(h3_conn).await?;
-
-        // Spawn the connection driver
-        tokio::spawn(async move {
-            if let Err(e) = future::poll_fn(|cx| driver.poll_close(cx)).await {
-                tracing::error!("Connection driver error: {}", e);
-            }
-        });
-
         let mut fs = QuicFS {
             send_request: None,
             inodes: HashMap::new(),
