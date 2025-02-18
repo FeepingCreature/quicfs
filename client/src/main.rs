@@ -267,8 +267,7 @@ impl Filesystem for QuicFS {
                         "dir" => FileType::Directory,
                         _ => continue,
                     };
-                    let name = entry.name.clone();
-                    entries.push((self.next_inode, file_type, &name));
+                    entries.push((self.next_inode, file_type, entry.name.as_str()));
                 }
 
                 // Handle offset and add entries
