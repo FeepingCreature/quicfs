@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use tokio::fs;
+use std::os::unix::fs::PermissionsExt;
 use anyhow::Result;
 use quicfs_common::types::{DirList, DirEntry};
 
