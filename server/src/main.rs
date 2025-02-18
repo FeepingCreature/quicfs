@@ -2,10 +2,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
-mod fs;
-mod http;
-
-use fs::FileSystem;
+use quicfs_server::{fs::FileSystem, http::HttpServer};
 use http::HttpServer;
 
 #[tokio::main]

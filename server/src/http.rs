@@ -12,7 +12,6 @@ use bytes::Bytes;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
-use crate::routes;
 
 pub struct HttpServer {
     endpoint: Endpoint,
@@ -41,9 +40,9 @@ impl HttpServer {
 
         // Create router with routes
         let app = Router::new()
-            .route("/dir/*path", get(routes::list_directory))
-            .route("/file/*path", get(routes::read_file))
-            .route("/file/*path", patch(routes::write_file))
+            .route("/dir/*path", get(crate::routes::list_directory))
+            .route("/file/*path", get(crate::routes::read_file))
+            .route("/file/*path", patch(crate::routes::write_file))
             .with_state(self.fs.clone());
 
         loop {
