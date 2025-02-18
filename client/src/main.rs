@@ -401,7 +401,7 @@ impl Filesystem for QuicFS {
         }
 
         // For files, fetch current attributes from server
-        let attr_result = tokio::task::block_in_place(|| {
+        let attr_result: Result<FileAttr, anyhow::Error> = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 // Get the stored path for this inode
                 let path = self.paths.get(&ino)
