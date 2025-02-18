@@ -22,17 +22,29 @@ impl FileSystem {
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
+        println!("list_directory called with path: {}", path);
         // Handle directory paths
         let clean_path = path.trim_start_matches("/dir").trim_start_matches('/');
+        println!("After trimming, clean_path: {:?}", clean_path);
         let full_path = if clean_path.is_empty() {
+            println!("Using root path directly");
             self.root.clone()
         } else {
+            println!("Joining with root: {} + {}", self.root.display(), clean_path);
             self.root.join(clean_path)
         };
-        println!("Listing directory: {:?}", full_path);
+        println!("Full path to list: {:?}", full_path);
         let mut entries = Vec::new();
 
-        println!("Reading directory contents...");
+        println!("Reading directory contents from {:?}...", full_path);
+        if !full_path.exists() {
+            println!("Path does not exist!");
+            return Err(anyhow::anyhow!("Directory does not exist: {:?}", full_path));
+        }
+        if !full_path.is_dir() {
+            println!("Path is not a directory!");
+            return Err(anyhow::anyhow!("Path is not a directory: {:?}", full_path));
+        }
         let mut dir = fs::read_dir(&full_path).await?;
         while let Some(entry) = dir.next_entry().await? {
             let metadata = entry.metadata().await?;
