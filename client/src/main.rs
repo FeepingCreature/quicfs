@@ -244,6 +244,63 @@ impl QuicFS {
 }
 
 impl Filesystem for QuicFS {
+    fn create(
+        &mut self,
+        _req: &FuseRequest,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        flags: i32,
+        reply: ReplyCreate,
+    ) {
+        info!("create: {} in {} with mode {:o}", name.to_string_lossy(), parent, mode);
+
+        // Create a new inode for the file
+        let ino = self.next_inode;
+        self.next_inode += 1;
+
+        let attr = FileAttr {
+            ino,
+            size: 0,
+            blocks: 0,
+            atime: SystemTime::now(),
+            mtime: SystemTime::now(),
+            ctime: SystemTime::now(),
+            crtime: SystemTime::now(),
+            kind: FileType::RegularFile,
+            perm: mode as u16,
+            nlink: 1,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: flags as u32,
+            blksize: 512,
+        };
+
+        // Store the inode
+        self.inodes.insert(ino, attr);
+
+        // Create empty file on server
+        let create_result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let path = format!("/{}", name.to_string_lossy());
+                self.write_file(&path, 0, &[]).await
+            })
+        });
+
+        match create_result {
+            Ok(_) => {
+                reply.created(&TTL, &attr, 0, 0, flags as u32);
+            }
+            Err(e) => {
+                warn!("Failed to create file: {}", e);
+                self.inodes.remove(&ino);
+                reply.error(libc::EIO);
+            }
+        }
+    }
+
     fn lookup(&mut self, _req: &FuseRequest, parent: u64, name: &OsStr, reply: ReplyEntry) {
         info!("lookup: {} in {} (pid: {})", name.to_string_lossy(), parent, _req.pid());
         
