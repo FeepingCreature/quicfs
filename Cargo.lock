@@ -323,6 +323,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "quicfs-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "quicfs-common",
+ "quinn",
+ "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "quicfs-common"
+version = "0.1.0"
+
+[[package]]
+name = "quicfs-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "quicfs-common",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "tokio",
+]
+
+[[package]]
 name = "quinn"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,18 +365,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "quinn-file-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "quinn",
- "rcgen",
- "rustls",
- "tokio",
 ]
 
 [[package]]

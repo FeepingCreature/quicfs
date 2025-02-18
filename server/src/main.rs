@@ -42,7 +42,8 @@ async fn main() -> Result<()> {
                                 println!("New stream established");
                                 // Here you would implement the actual file serving logic
                                 // This is just a placeholder that acknowledges the stream
-                                if let Ok((mut send, _recv)) = stream {
+                                if let Ok(stream) = stream {
+                                    let (mut send, _recv) = stream;
                                     let _ = send.write_all(b"Hello from Quinn server!").await;
                                 }
                             }
