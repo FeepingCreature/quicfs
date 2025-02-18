@@ -136,7 +136,7 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
-                        let h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection));
+                        let h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection)).await?;
                         println!("Starting HTTP/3 connection handling");
                         
                         while let Ok(Some((req, mut sender))) = h3_conn.accept_request().await {
