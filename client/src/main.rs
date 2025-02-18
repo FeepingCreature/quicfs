@@ -245,32 +245,37 @@ impl Filesystem for QuicFS {
             return;
         }
 
-        // Standard directory entries
-        let mut idx = 1;
-        if offset == 0 {
-            reply.add(ROOT_INODE, idx, FileType::Directory, ".");
-            idx += 1;
-            reply.add(ROOT_INODE, idx, FileType::Directory, "..");
-            idx += 1;
-        }
+        // Create entries vector with . and ..
+        let mut entries = vec![
+            (ROOT_INODE, FileType::Directory, "."),
+            (ROOT_INODE, FileType::Directory, ".."),
+        ];
 
-        // Fetch directory contents from server
-        let entries = tokio::task::block_in_place(|| {
+        // Fetch directory contents from server and append to entries
+        let server_entries = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 self.list_directory("/").await
             })
         });
 
-        match entries {
+        match server_entries {
             Ok(dir_list) => {
+                // Add server entries to our vector
                 for entry in dir_list.entries {
                     let file_type = match entry.type_.as_str() {
                         "file" => FileType::RegularFile,
                         "dir" => FileType::Directory,
                         _ => continue,
                     };
-                    reply.add(self.next_inode + idx as u64, idx as i64, file_type, entry.name);
-                    idx += 1;
+                    entries.push((self.next_inode, file_type, &entry.name));
+                }
+
+                // Handle offset and add entries
+                for (i, (ino, file_type, name)) in entries.iter().enumerate().skip(offset as usize) {
+                    // Reply is full, break the loop
+                    if reply.add(*ino, (i + 1) as i64, *file_type, name) {
+                        break;
+                    }
                 }
                 reply.ok();
             }
