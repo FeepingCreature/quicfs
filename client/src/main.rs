@@ -384,14 +384,19 @@ impl Filesystem for QuicFS {
                 if let Some(entry) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
                     // Check if we already have this path mapped to an inode
                     let path = format!("/{}", entry.name);
+                    info!("Checking if path {} is already mapped to an inode", path);
                     if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == path) {
+                        info!("Found existing inode {} for path {}", existing_ino, path);
                         // Reuse existing inode
                         if let Some(attr) = self.inodes.get(&existing_ino) {
+                            info!("Reusing existing inode {} with size {}", existing_ino, attr.size);
                             reply.entry(&TTL, attr, 0);
                             return;
                         }
+                        info!("Existing inode {} not found in attributes cache", existing_ino);
                     }
 
+                    info!("No existing inode found for path {}, creating new one", path);
                     // If not found, create new inode
                     let file_type = match entry.type_.as_str() {
                         "file" => FileType::RegularFile,
@@ -429,11 +434,13 @@ impl Filesystem for QuicFS {
                     info!("Returning lookup response with inode {} and size {}", attr.ino, attr.size);
                     reply.entry(&TTL, &attr, 0);
                 } else {
+                    info!("File {} not found in server directory listing", name.to_string_lossy());
                     reply.error(ENOENT);
                 }
             }
             Err(e) => {
                 warn!("Failed to look up file: {}", e);
+                warn!("Server directory listing request failed");
                 reply.error(libc::EIO);
             }
         }
