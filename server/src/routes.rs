@@ -7,7 +7,6 @@ use axum::{
 };
 use bytes::Bytes;
 use crate::fs::FileSystem;
-use quicfs_common::types::DirList;
 
 pub async fn list_directory(
     State(fs): State<Arc<FileSystem>>,

@@ -4,7 +4,7 @@ use axum::{
     routing::{get, patch},
     Router,
 };
-use tower_service::Service;
+use tower::Service;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{fs::FileSystem, routes};
