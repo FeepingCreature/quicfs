@@ -66,20 +66,61 @@ pub async fn write_file(
     println!("Received {} bytes of data", bytes.len());
     println!("Headers: {:?}", headers);
     
-    // Parse Content-Range header if present
-    let offset = headers
-        .get("Content-Range")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| {
-            if let Some(range) = v.strip_prefix("bytes ") {
-                range.split('-').next().and_then(|s| s.parse::<u64>().ok())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
+    // Parse and validate Content-Range header
+    let (offset, expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
+        Some(range) => {
+            if let Some(range) = range.strip_prefix("bytes ") {
+                let parts: Vec<&str> = range.split('/').collect();
+                if parts.len() != 2 {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": "Invalid Content-Range format"
+                    }))).into_response();
+                }
+                
+                let range_parts: Vec<&str> = parts[0].split('-').collect();
+                if range_parts.len() != 2 {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": "Invalid Content-Range format"
+                    }))).into_response();
+                }
 
-    println!("Writing at offset: {}", offset);
+                let start: u64 = range_parts[0].parse().map_err(|_| {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": "Invalid Content-Range start offset"
+                    }))).into_response()
+                })?;
+                
+                let end: u64 = range_parts[1].parse().map_err(|_| {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": "Invalid Content-Range end offset"
+                    }))).into_response()
+                })?;
+                
+                let total: u64 = parts[1].parse().map_err(|_| {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": "Invalid Content-Range total length"
+                    }))).into_response()
+                })?;
+
+                let expected_len = end - start + 1;
+                if bytes.len() as u64 != expected_len {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                        "error": format!("Content length mismatch: expected {} bytes but got {}", 
+                                       expected_len, bytes.len())
+                    }))).into_response();
+                }
+
+                (start, expected_len)
+            } else {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                    "error": "Invalid Content-Range format"
+                }))).into_response();
+            }
+        }
+        None => (0, bytes.len() as u64),
+    };
+
+    println!("Writing {} bytes at offset: {}", expected_len, offset);
     match fs.write_file(&format!("/file/{}", path), offset, &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (
