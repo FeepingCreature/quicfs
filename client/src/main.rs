@@ -263,12 +263,15 @@ impl QuicFS {
         });
 
         let mut fs = QuicFS {
-            send_request,
+            send_request: None,
             inodes: HashMap::new(),
             paths: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
             server_url,
         };
+        
+        // Initial connection
+        fs.ensure_connected().await?;
         
         // Create root directory
         let root = FileAttr {
