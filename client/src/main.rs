@@ -2,12 +2,17 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    Request,
+    Request as FuseRequest,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
 use std::time::{Duration, SystemTime};
 use tracing::{info, warn};
+use std::collections::HashMap;
+use std::sync::Arc;
+use quicfs_common::types::{DirEntry, DirList};
+use http::Request;
+use bytes::Bytes;
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -21,11 +26,6 @@ struct Opts {
     #[clap(short, long)]
     server: String,
 }
-
-use std::collections::HashMap;
-use std::sync::Arc;
-use quicfs_common::types::{DirEntry, DirList};
-use http::{Request, Response};
 
 // Temporary certificate verification skip for development
 struct SkipServerVerification;
@@ -47,7 +47,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    client: h3::client::Connection<h3_quinn::Connection>,
+    client: h3::client::Connection<h3_quinn::Connection, Bytes>,
     inodes: HashMap<u64, FileAttr>,
     next_inode: u64,
     server_url: String,
@@ -67,7 +67,7 @@ impl QuicFS {
             return Err(anyhow::anyhow!("Server returned error: {}", parts.status));
         }
 
-        let body = h3::client::read_body(body).await?;
+        let body = h3::client::read_body(&mut body).await?;
         let dir_list: DirList = serde_json::from_slice(&body)?;
         Ok(dir_list)
     }
@@ -78,13 +78,16 @@ impl QuicFS {
         let host = url.host().unwrap();
         let port = url.port_u16().unwrap_or(4433);
         
-        let client_config = quinn::ClientConfig::new(Arc::new(quinn::rustls::ClientConfig::builder()
-            .with_safe_defaults()
+        let client_config = quinn::ClientConfig::new(Arc::new(rustls::ClientConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_safe_default_protocol_versions()?
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
             .with_no_client_auth()));
 
         let endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
-        let connection = endpoint.connect_with(client_config, (host, port), host)?
+        let addr = format!("{}:{}", host, port).parse()?;
+        let connection = endpoint.connect_with(client_config, addr, host)?
             .await?;
             
         let h3_conn = h3_quinn::Connection::new(connection);
@@ -117,7 +120,7 @@ impl QuicFS {
         };
         
         fs.inodes.insert(ROOT_INODE, root);
-        fs
+        Ok(fs)
     }
 }
 
@@ -204,7 +207,7 @@ impl Filesystem for QuicFS {
                         "dir" => FileType::Directory,
                         _ => continue,
                     };
-                    reply.add(self.next_inode + idx, idx as i64, file_type, entry.name);
+                    reply.add(self.next_inode + idx as u64, idx as i64, file_type, entry.name);
                     idx += 1;
                 }
                 reply.ok();
