@@ -141,18 +141,45 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                                 Ok(Some((req, mut stream))) => {
                                     println!("Received request: {:?}", req);
                                     
-                                    // Create HTTP/3 response
-                                    let response = http::Response::builder()
-                                        .status(200)
-                                        .header("content-type", "text/plain")
-                                        .body(())
-                                        .unwrap();
+                                    println!("Processing request path: {}", req.uri().path());
                                     
-                                    // Send response headers
-                                    stream.send_response(response).await.unwrap();
-                                    
-                                    // Send response body
-                                    stream.send_data(bytes::Bytes::from("Hello World!\n")).await.unwrap();
+                                    // Handle directory listing
+                                    if req.uri().path().starts_with("/dir") {
+                                        let dir_list = quicfs_common::types::DirList {
+                                            entries: vec![
+                                                quicfs_common::types::DirEntry {
+                                                    name: "test.txt".to_string(),
+                                                    type_: "file".to_string(),
+                                                    size: 42,
+                                                    mode: 0o644,
+                                                    mtime: "2024-02-18T15:04:05Z".to_string(),
+                                                    atime: "2024-02-18T15:04:05Z".to_string(),
+                                                    ctime: "2024-02-18T15:04:05Z".to_string(),
+                                                }
+                                            ]
+                                        };
+                                        
+                                        let json = serde_json::to_string(&dir_list).unwrap();
+                                        
+                                        let response = http::Response::builder()
+                                            .status(200)
+                                            .header("content-type", "application/json")
+                                            .body(())
+                                            .unwrap();
+                                        
+                                        stream.send_response(response).await.unwrap();
+                                        stream.send_data(bytes::Bytes::from(json)).await.unwrap();
+                                    } else {
+                                        // Default response for other paths
+                                        let response = http::Response::builder()
+                                            .status(404)
+                                            .header("content-type", "text/plain")
+                                            .body(())
+                                            .unwrap();
+                                        
+                                        stream.send_response(response).await.unwrap();
+                                        stream.send_data(bytes::Bytes::from("Not Found")).await.unwrap();
+                                    }
                                     stream.finish().await.unwrap();
                                 }
                                 Ok(None) => {
