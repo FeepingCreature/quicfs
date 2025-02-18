@@ -63,29 +63,40 @@ impl HttpServer {
                             let mut h3: h3::server::Connection<_, Bytes> = h3::server::Connection::new(h3_conn).await?;
                             
                             while let Ok(Some((req, mut send))) = h3.accept().await {
-                                let _path = req.uri().path().to_string();
-                                let _method = req.method().clone();
-                                let _headers = req.headers().clone();
+                                let path = req.uri().path().to_string();
+                                let method = req.method().clone();
+                                let headers = req.headers().clone();
+                                println!("Received request: {} {} with headers: {:?}", method, path, headers);
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
                                 let request = Request::from_parts(req.into_parts().0, Body::empty());
+                                println!("Routing request to axum app...");
                                 let response = app.call(request).await;
                                 match response {
                                     Ok(response) => {
                                         let (parts, mut body) = response.into_parts();
+                                        println!("Response status: {}", parts.status);
+                                        println!("Response headers: {:?}", parts.headers);
                                         let h3_response = http::Response::from_parts(parts, ());
+                                        println!("Sending HTTP/3 response headers...");
                                         send.send_response(h3_response).await?;
                                         
                                         // Convert axum body to bytes
+                                        println!("Converting response body...");
                                         match body.frame().await {
                                             Some(Ok(frame)) => {
                                                 if let Ok(data) = frame.into_data() {
+                                                    println!("Sending response data ({} bytes)...", data.len());
                                                     send.send_data(data.into()).await?;
+                                                    println!("Response data sent successfully");
                                                 }
                                             }
-                                            Some(Err(e)) => return Err(anyhow::anyhow!("Body error: {}", e)),
-                                            None => (),
+                                            Some(Err(e)) => {
+                                                println!("Error converting body frame: {}", e);
+                                                return Err(anyhow::anyhow!("Body error: {}", e));
+                                            }
+                                            None => println!("No response body to send"),
                                         }
                                     },
                                     Err(e) => {
