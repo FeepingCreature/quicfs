@@ -12,6 +12,7 @@ use bytes::{Buf, Bytes};
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
+use tracing::{debug, info, warn, error};
 
 pub struct HttpServer {
     endpoint: Endpoint,
@@ -36,7 +37,7 @@ impl HttpServer {
     }
 
     pub async fn run(&self) -> Result<()> {
-        println!("QUIC server listening on {}", self.endpoint.local_addr()?);
+        info!("QUIC server listening on {}", self.endpoint.local_addr()?);
 
         // Create router with routes
         let app = Router::new()
@@ -47,17 +48,17 @@ impl HttpServer {
             .with_state(self.fs.clone());
 
         loop {
-            println!("Waiting for QUIC connection...");
+            info!("Waiting for QUIC connection...");
             let connection = self.endpoint.accept().await;
             let app = app.clone();
             
             match connection {
                 Some(conn) => {
-                    println!("New QUIC connection incoming, awaiting handshake...");
+                    info!("New QUIC connection incoming, awaiting handshake...");
                     tokio::spawn(async move {
                         let result: Result<()> = async {
                         if let Ok(connection) = conn.await {
-                            println!("QUIC connection established from {}", 
+                            info!("QUIC connection established from {}", 
                                 connection.remote_address());
                             
                             let h3_conn = h3_quinn::Connection::new(connection);
@@ -66,8 +67,7 @@ impl HttpServer {
                             while let Ok(Some((req, mut stream))) = h3.accept().await {
                                 let path = req.uri().path().to_string();
                                 let method = req.method().clone();
-                                let headers = req.headers().clone();
-                                println!("Received request: {} {} with headers: {:?}", method, path, headers);
+                                info!("Received {} request for {}", method, path);
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
@@ -80,43 +80,32 @@ impl HttpServer {
                                     req.into_parts().0,
                                     Body::from(body)
                                 );
-                                println!("Routing request to axum app...");
                                 let response = app.call(request).await;
                                 match response {
                                     Ok(response) => {
                                         let (parts, mut body) = response.into_parts();
-                                        println!("Response status: {}", parts.status);
-                                        println!("Response headers: {:?}", parts.headers);
+                                        info!("Sending response: {} for {}", parts.status, path);
                                         let h3_response = http::Response::from_parts(parts, ());
-                                        println!("Sending HTTP/3 response headers...");
                                         stream.send_response(h3_response).await?;
                                         
                                         // Convert axum body to bytes
-                                        println!("Converting response body...");
                                         match body.frame().await {
                                             Some(Ok(frame)) => {
-                                                println!("Got response frame: {:?}", frame);
                                                 if let Ok(data) = frame.into_data() {
-                                                    println!("Converted to data: {:?}", String::from_utf8_lossy(&data));
-                                                    println!("Sending response data ({} bytes)...", data.len());
+                                                    debug!("Sending response data ({} bytes)", data.len());
                                                     stream.send_data(data.into()).await?;
-                                                    println!("Response data sent successfully");
-                                                } else {
-                                                    println!("Failed to convert frame to data");
                                                 }
                                             }
                                             Some(Err(e)) => {
-                                                println!("Error converting body frame: {}", e);
-                                                println!("Error details: {:?}", e);
+                                                error!("Error converting response body: {}", e);
                                                 return Err(anyhow::anyhow!("Body error: {}", e));
                                             }
-                                            None => println!("No response body to send"),
+                                            None => debug!("Empty response body"),
                                         }
                                     },
                                     Err(e) => {
-                                        eprintln!("Error handling request: {}", e);
+                                        error!("Error handling request: {}", e);
                                         let error_body = format!("Internal server error: {}", e);
-                                        println!("Error body: {}", error_body);
                                         let response = http::Response::builder()
                                             .status(500)
                                             .header("content-type", "text/plain")
@@ -138,7 +127,7 @@ impl HttpServer {
                         }
                     });
                 }
-                None => println!("No QUIC connection available"),
+                None => warn!("No QUIC connection available"),
             }
         }
     }

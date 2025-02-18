@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tracing::{info, warn};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -16,27 +17,21 @@ pub async fn list_directory(
         Some(Path(p)) => format!("/dir/{}", p),
         None => "/dir/".to_string(),
     };
-    println!("Handling directory listing request for path: {}", dir_path);
-    println!("Attempting to list directory at path: {:?}", dir_path);
+    info!("GET /dir/{}", dir_path);
     match fs.list_directory(&dir_path).await {
         Ok(dir_list) => {
-            println!("Directory listing successful, found {} entries", dir_list.entries.len());
-            let response = (StatusCode::OK, Json(dir_list)).into_response();
-            println!("Sending directory listing response: {:?}", response);
-            response
+            info!("Directory listing successful with {} entries", dir_list.entries.len());
+            (StatusCode::OK, Json(dir_list)).into_response()
         },
         Err(err) => {
-            println!("Error listing directory: {}", err);
-            println!("Error details: {:?}", err);
-            let error_response = (
+            warn!("Failed to list directory: {}", err);
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": err.to_string(),
                     "details": format!("{:?}", err)
                 }))
-            ).into_response();
-            println!("Sending error response: {:?}", error_response);
-            error_response
+            ).into_response()
         },
     }
 }
@@ -62,17 +57,14 @@ pub async fn write_file(
     headers: http::HeaderMap,
     bytes: Bytes,
 ) -> impl IntoResponse {
-    println!("Write request received for path: /file/{}", path);
-    println!("Received {} bytes of data", bytes.len());
-    println!("Headers: {:?}", headers);
+    info!("PATCH /file/{} with {} bytes", path, bytes.len());
     
     // Parse and validate Content-Range header
     let (offset, expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
         Some(range) => {
-            println!("Parsing Content-Range header: {}", range);
+            info!("Content-Range: {}", range);
             if let Some(range) = range.strip_prefix("bytes ") {
                 let parts: Vec<&str> = range.split('/').collect();
-                println!("Split parts: {:?}", parts);
                 if parts.len() != 2 {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": "Invalid Content-Range format"
@@ -107,7 +99,6 @@ pub async fn write_file(
                 }
                 
                 let range_parts: Vec<&str> = parts[0].split('-').collect();
-                println!("Range parts: {:?}", range_parts);
                 if range_parts.len() != 2 {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": "Invalid Content-Range format"
@@ -149,7 +140,7 @@ pub async fn write_file(
                 } else {
                     0
                 };
-                println!("Calculated expected_len={} from start={}, end={}", expected_len, start, end);
+                info!("Writing {} bytes at offset {}", expected_len, start);
                 if bytes.len() as u64 != expected_len {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": format!("Content length mismatch: expected {} bytes but got {} (range: {}-{}/{})", 
@@ -167,7 +158,7 @@ pub async fn write_file(
         None => (0, bytes.len() as u64),
     };
 
-    println!("Writing {} bytes at offset: {}", expected_len, offset);
+    info!("Writing {} bytes at offset: {}", expected_len, offset);
     match fs.write_file(&format!("/file/{}", path), offset, &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (
