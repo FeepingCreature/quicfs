@@ -69,16 +69,31 @@ async fn handle_connection(connection: quinn::Connection, fs: Arc<FileSystem>) -
                 
                 // Handle directory listing
                 if req.uri().path().starts_with("/dir") {
-                    let dir_list = fs.list_directory(req.uri().path()).await?;
-                    let json = serde_json::to_string(&dir_list)?;
-                    
-                    let response = http::Response::builder()
-                        .status(200)
-                        .header("content-type", "application/json")
-                        .body(())?;
-                    
-                    stream.send_response(response).await?;
-                    stream.send_data(bytes::Bytes::from(json)).await?;
+                    match fs.list_directory(req.uri().path()).await {
+                        Ok(dir_list) => {
+                            let json = serde_json::to_string(&dir_list)?;
+                            let response = http::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/json")
+                                .body(())?;
+                            
+                            stream.send_response(response).await?;
+                            stream.send_data(bytes::Bytes::from(json)).await?;
+                        },
+                        Err(e) => {
+                            let response = http::Response::builder()
+                                .status(500)
+                                .header("content-type", "application/json")
+                                .body(())?;
+                            
+                            let error_json = serde_json::json!({
+                                "error": e.to_string()
+                            }).to_string();
+                            
+                            stream.send_response(response).await?;
+                            stream.send_data(bytes::Bytes::from(error_json)).await?;
+                        }
+                    }
                 } else {
                     // Default response for other paths
                     let response = http::Response::builder()

@@ -103,13 +103,16 @@ impl QuicFS {
         stream.finish().await?;
 
         let resp = stream.recv_response().await?;
-        if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("Server returned error: {}", resp.status()));
-        }
-
+        
         let mut body = Vec::new();
         while let Some(chunk) = stream.recv_data().await? {
             body.extend_from_slice(chunk.chunk());
+        }
+
+        if !resp.status().is_success() {
+            let error: serde_json::Value = serde_json::from_slice(&body)?;
+            return Err(anyhow::anyhow!("Server error: {}", 
+                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
         }
 
         let dir_list: DirList = serde_json::from_slice(&body)?;
