@@ -25,8 +25,10 @@ impl FileSystem {
         // Remove both /dir prefix and leading slash, then join with root
         let clean_path = path.trim_start_matches("/dir").trim_start_matches('/');
         let full_path = self.root.join(clean_path);
+        println!("Listing directory: {:?}", full_path);
         let mut entries = Vec::new();
 
+        println!("Reading directory contents...");
         let mut dir = fs::read_dir(&full_path).await?;
         while let Some(entry) = dir.next_entry().await? {
             let metadata = entry.metadata().await?;
@@ -40,8 +42,11 @@ impl FileSystem {
             let atime = metadata.accessed()?;
             let ctime = metadata.created()?;
 
+            let entry_name = entry.file_name().to_string_lossy().into_owned();
+            println!("Found entry: {} (type: {})", entry_name, file_type);
+            
             entries.push(DirEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
+                name: entry_name,
                 type_: file_type.to_string(),
                 size: metadata.len(),
                 mode: metadata.permissions().mode() & 0o777,
