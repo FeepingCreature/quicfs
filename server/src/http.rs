@@ -8,7 +8,7 @@ use axum::{
 use tower::Service;
 use http::Request;
 use http_body_util::BodyExt;
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
