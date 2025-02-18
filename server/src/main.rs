@@ -36,8 +36,8 @@ async fn main() -> Result<()> {
         .with_no_client_auth()
         .with_single_cert(cert_chain.clone(), priv_key.clone())?;
     server_crypto.alpn_protocols = vec![b"h3".to_vec()];
-    
-    let server_config = QuinnServerConfig::try_from(server_crypto)?;
+
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
     let endpoint = Endpoint::server(server_config, "0.0.0.0:4433".parse()?)?;
     
     println!("QUIC server config created");
@@ -136,24 +136,33 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
-                        let h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection)).await?;
-                        println!("Starting HTTP/3 connection handling");
-                        
-                        while let Ok(Some((req, mut sender))) = h3_conn.accept_request().await {
-                            println!("New HTTP/3 request: {:?}", req);
+                        loop {
+                            let stream = match connection.accept_bi().await {
+                                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                                    println!("connection closed");
+                                    return;
+                                }
+                                Err(e) => {
+                                    eprintln!("connection error: {}", e);
+                                    return;
+                                }
+                                Ok(s) => s,
+                            };
                             
-                            // Create HTTP response
-                            let response = http::Response::builder()
-                                .status(200)
-                                .header("content-type", "text/plain")
-                                .body(bytes::Bytes::from("Hello World!\n"))
-                                .unwrap();
+                            let (mut send, mut recv) = stream;
+                            println!("New stream established");
                             
-                            if let Err(e) = sender.send_response(response).await {
-                                eprintln!("Failed to send HTTP/3 response: {}", e);
+                            // Simple response for now
+                            let response = b"HTTP/3 200 OK\r\nContent-Length: 13\r\nContent-Type: text/plain\r\n\r\nHello World!\n";
+                            if let Err(e) = send.write_all(response).await {
+                                eprintln!("Failed to send response: {}", e);
+                                continue;
+                            }
+                            
+                            if let Err(e) = send.finish().await {
+                                eprintln!("Failed to finish stream: {}", e);
                             }
                         }
-                        println!("Connection stream loop ended");
                     });
                 }
                 Err(e) => eprintln!("QUIC connection handshake failed: {}", e),
