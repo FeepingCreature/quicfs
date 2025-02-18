@@ -98,6 +98,32 @@ async fn handle_connection(connection: quinn::Connection, fs: Arc<FileSystem>) -
                             stream.send_data(bytes::Bytes::from(error_json)).await?;
                         }
                     }
+                } else if req.uri().path().starts_with("/file") {
+                    // Handle file operations
+                    match fs.read_file(req.uri().path()).await {
+                        Ok(data) => {
+                            let response = http::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/octet-stream")
+                                .body(())?;
+                            
+                            stream.send_response(response).await?;
+                            stream.send_data(bytes::Bytes::from(data)).await?;
+                        },
+                        Err(e) => {
+                            let response = http::Response::builder()
+                                .status(500)
+                                .header("content-type", "application/json")
+                                .body(())?;
+                            
+                            let error_json = serde_json::json!({
+                                "error": e.to_string()
+                            }).to_string();
+                            
+                            stream.send_response(response).await?;
+                            stream.send_data(bytes::Bytes::from(error_json)).await?;
+                        }
+                    }
                 } else {
                     // Default response for other paths
                     let response = http::Response::builder()

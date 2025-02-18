@@ -93,6 +93,32 @@ struct QuicFS {
 }
 
 impl QuicFS {
+    async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("{}/file{}", self.server_url, path))
+            .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
+            .body(())?;
+
+        let mut stream = self.send_request.send_request(req).await?;
+        stream.finish().await?;
+
+        let resp = stream.recv_response().await?;
+        
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.recv_data().await? {
+            body.extend_from_slice(chunk.chunk());
+        }
+
+        if !resp.status().is_success() {
+            let error: serde_json::Value = serde_json::from_slice(&body)?;
+            return Err(anyhow::anyhow!("Server error: {}", 
+                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+        }
+
+        Ok(body)
+    }
+
     async fn list_directory(&mut self, path: &str) -> Result<DirList> {
         let req = Request::builder()
             .method("GET")
@@ -277,8 +303,37 @@ impl Filesystem for QuicFS {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        warn!("read: {} at offset {}", ino, offset);
-        reply.error(ENOENT);
+        info!("read: {} at offset {} size {}", ino, offset, _size);
+        
+        // Look up the inode
+        let attr = match self.inodes.get(&ino) {
+            Some(attr) => attr,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        // Only allow reading regular files
+        if attr.kind != FileType::RegularFile {
+            reply.error(libc::EISDIR);
+            return;
+        }
+
+        // Make request to server
+        let read_result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.read_file("/hello.txt", offset as u64, _size).await
+            })
+        });
+
+        match read_result {
+            Ok(data) => reply.data(&data),
+            Err(e) => {
+                warn!("Failed to read file: {}", e);
+                reply.error(libc::EIO);
+            }
+        }
     }
 
     fn readdir(
