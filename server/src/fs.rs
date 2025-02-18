@@ -85,6 +85,20 @@ impl FileSystem {
         fs::read(&full_path).await.map_err(Into::into)
     }
 
+    pub async fn truncate_file(&self, path: &str, size: u64) -> Result<()> {
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        
+        // Open file and set the new length
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(&full_path)
+            .await?;
+            
+        file.set_len(size).await?;
+        Ok(())
+    }
+
     pub async fn write_file(&self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
         let full_path = self.root.join(clean_path);

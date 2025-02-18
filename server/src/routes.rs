@@ -78,6 +78,33 @@ pub async fn write_file(
                         "error": "Invalid Content-Range format"
                     }))).into_response();
                 }
+
+                // Handle special case for truncate: "bytes */size"
+                if parts[0] == "*" {
+                    let new_size: u64 = match parts[1].parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                                "error": "Invalid Content-Range size for truncate"
+                            }))).into_response();
+                        }
+                    };
+                    // For truncate operations, we expect no content
+                    if !bytes.is_empty() {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": "Truncate operation should not include content"
+                        }))).into_response();
+                    }
+                    return match fs.truncate_file(&format!("/file/{}", path), new_size).await {
+                        Ok(_) => StatusCode::OK.into_response(),
+                        Err(err) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": err.to_string()
+                            }))
+                        ).into_response(),
+                    };
+                }
                 
                 let range_parts: Vec<&str> = parts[0].split('-').collect();
                 println!("Range parts: {:?}", range_parts);
