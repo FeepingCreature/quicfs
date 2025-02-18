@@ -281,49 +281,75 @@ impl Filesystem for QuicFS {
     ) {
         info!("create: {} in {} with mode {:o}", name.to_string_lossy(), parent, mode);
 
-        // Create a new inode for the file
-        let ino = self.next_inode;
-        self.next_inode += 1;
-
-        let attr = FileAttr {
-            ino,
-            size: 0,
-            blocks: 0,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
-            kind: FileType::RegularFile,
-            perm: mode as u16,
-            nlink: 1,
-            uid: 1000,
-            gid: 1000,
-            rdev: 0,
-            flags: flags as u32,
-            blksize: 512,
-        };
-
-        // Store the inode and path
-        self.inodes.insert(ino, attr);
-        let path = format!("/{}", name.to_string_lossy());
-        self.paths.insert(ino, path.clone());
-        info!("Created inode {} with path {}", ino, path);
-
-        // Create empty file on server
-        let create_result = tokio::task::block_in_place(|| {
+        // Check if file already exists in server's directory listing
+        let lookup_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let path = format!("/{}", name.to_string_lossy());
-                self.write_file(&path, 0, &[]).await
+                self.list_directory("/").await
             })
         });
 
-        match create_result {
-            Ok(_) => {
-                reply.created(&TTL, &attr, 0, 0, flags as u32);
+        match lookup_result {
+            Ok(dir_list) => {
+                if let Some(existing) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
+                    // File exists, return existing inode if we have it
+                    let path = format!("/{}", existing.name);
+                    if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == path) {
+                        if let Some(attr) = self.inodes.get(&existing_ino) {
+                            reply.created(&TTL, attr, 0, 0, flags as u32);
+                            return;
+                        }
+                    }
+                }
+
+                // Create a new inode for the file
+                let ino = self.next_inode;
+                self.next_inode += 1;
+
+                let attr = FileAttr {
+                    ino,
+                    size: 0,
+                    blocks: 0,
+                    atime: SystemTime::now(),
+                    mtime: SystemTime::now(),
+                    ctime: SystemTime::now(),
+                    crtime: SystemTime::now(),
+                    kind: FileType::RegularFile,
+                    perm: mode as u16,
+                    nlink: 1,
+                    uid: 1000,
+                    gid: 1000,
+                    rdev: 0,
+                    flags: flags as u32,
+                    blksize: 512,
+                };
+
+                // Store the inode and path
+                self.inodes.insert(ino, attr);
+                let path = format!("/{}", name.to_string_lossy());
+                self.paths.insert(ino, path.clone());
+                info!("Created inode {} with path {}", ino, path);
+
+                // Create empty file on server
+                let create_result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let path = format!("/{}", name.to_string_lossy());
+                        self.write_file(&path, 0, &[]).await
+                    })
+                });
+
+                match create_result {
+                    Ok(_) => {
+                        reply.created(&TTL, &attr, 0, 0, flags as u32);
+                    }
+                    Err(e) => {
+                        warn!("Failed to create file: {}", e);
+                        self.inodes.remove(&ino);
+                        reply.error(libc::EIO);
+                    }
+                }
             }
             Err(e) => {
-                warn!("Failed to create file: {}", e);
-                self.inodes.remove(&ino);
+                warn!("Failed to check for existing file: {}", e);
                 reply.error(libc::EIO);
             }
         }
