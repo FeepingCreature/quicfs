@@ -84,23 +84,32 @@ pub async fn write_file(
                     }))).into_response();
                 }
 
-                let start: u64 = range_parts[0].parse().map_err(|_| {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                        "error": "Invalid Content-Range start offset"
-                    }))).into_response()
-                })?;
+                let start: u64 = match range_parts[0].parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": "Invalid Content-Range start offset"
+                        }))).into_response();
+                    }
+                };
                 
-                let end: u64 = range_parts[1].parse().map_err(|_| {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                        "error": "Invalid Content-Range end offset"
-                    }))).into_response()
-                })?;
+                let end: u64 = match range_parts[1].parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": "Invalid Content-Range end offset"
+                        }))).into_response();
+                    }
+                };
                 
-                let total: u64 = parts[1].parse().map_err(|_| {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                        "error": "Invalid Content-Range total length"
-                    }))).into_response()
-                })?;
+                let total: u64 = match parts[1].parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                            "error": "Invalid Content-Range total length"
+                        }))).into_response();
+                    }
+                };
 
                 let expected_len = end - start + 1;
                 if bytes.len() as u64 != expected_len {
