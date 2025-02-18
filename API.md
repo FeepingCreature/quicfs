@@ -43,19 +43,17 @@ PUT `/file/*path`
   - 403: Permission denied
 
 ### Delete File
-DELETE `/fs/file`
-- Query params:
-  - `path`: UTF-8 file path
+DELETE `/file/*path`
 - Success: 200 OK
 - Errors:
   - 404: File not found
   - 403: Permission denied
 
 ### Truncate File
-POST `/fs/file/truncate`
-- Query params:
-  - `path`: UTF-8 file path
-  - `size`: new size in bytes
+PATCH `/file/*path`
+- Headers:
+  - `Content-Length: 0`
+  - `Content-Range: bytes */new_size`
 - Success: 200 OK
 - Errors:
   - 404: File not found
@@ -65,9 +63,8 @@ POST `/fs/file/truncate`
 ## Directory Operations
 
 ### Create Directory
-POST `/fs/dir/create`
+PUT `/dir/*path`
 - Query params:
-  - `path`: UTF-8 directory path
   - `mode`: Unix permissions (optional, default 0755)
 - Success: 201 Created
 - Errors:
@@ -76,9 +73,7 @@ POST `/fs/dir/create`
   - 403: Permission denied
 
 ### Remove Directory
-DELETE `/fs/dir`
-- Query params:
-  - `path`: UTF-8 directory path
+DELETE `/dir/*path`
 - Success: 200 OK
 - Errors:
   - 404: Directory not found
@@ -86,9 +81,7 @@ DELETE `/fs/dir`
   - 409: Directory not empty
 
 ### List Directory
-GET `/fs/dir/list`
-- Query params:
-  - `path`: UTF-8 directory path
+GET `/dir/*path`
 - Success: 200 OK with JSON:
   ```json
   {
@@ -112,9 +105,7 @@ GET `/fs/dir/list`
 ## Metadata Operations
 
 ### Get Attributes
-GET `/fs/attr`
-- Query params:
-  - `path`: UTF-8 file path
+GET `/attr/*path`
 - Success: 200 OK with JSON:
   ```json
   {
@@ -131,9 +122,7 @@ GET `/fs/attr`
   - 403: Permission denied
 
 ### Set Attributes
-PATCH `/fs/attr`
-- Query params:
-  - `path`: UTF-8 file path
+PATCH `/attr/*path`
 - Body: JSON with attributes to change:
   ```json
   {
@@ -148,10 +137,9 @@ PATCH `/fs/attr`
   - 403: Permission denied
 
 ### Rename/Move
-POST `/fs/rename`
-- Query params:
-  - `from`: UTF-8 source path
-  - `to`: UTF-8 destination path
+PATCH `/file/*path`
+- Headers:
+  - `Destination: /file/new/path`
 - Success: 200 OK
 - Errors:
   - 404: Source not found
