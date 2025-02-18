@@ -1,29 +1,50 @@
 use anyhow::Result;
-use quinn::{Endpoint, ServerConfig};
-use std::net::SocketAddr;
+use axum::{
+    routing::{get, put},
+    Router,
+};
+use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
+use std::{net::SocketAddr, sync::Arc};
 use std::path::PathBuf;
 use tokio::fs;
+use tower_http::cors::CorsLayer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Configure TLS
+    // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     let cert_der = cert.serialize_der()?;
     let priv_key = cert.serialize_private_key_der();
     let priv_key = rustls::PrivateKey(priv_key);
     let cert_chain = vec![rustls::Certificate(cert_der)];
 
-    // Create server config
-    let server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
+    // Create QUIC server config
+    let quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
     
-    // Create endpoint with IPv4 configuration
-    let addr = "0.0.0.0:4433".parse::<SocketAddr>()?;
-    let endpoint = Endpoint::server(server_config, addr)?;
+    // Create QUIC endpoint
+    let quic_addr = "0.0.0.0:4433".parse::<SocketAddr>()?;
+    let endpoint = Endpoint::server(quic_config, quic_addr)?;
     
     match endpoint.local_addr() {
-        Ok(local_addr) => println!("Server socket bound to {}", local_addr),
-        Err(e) => eprintln!("Failed to get local address: {}", e),
+        Ok(local_addr) => println!("QUIC server bound to {}", local_addr),
+        Err(e) => eprintln!("Failed to get QUIC local address: {}", e),
     }
+
+    // Create HTTPS server
+    let https_addr = "0.0.0.0:443".parse::<SocketAddr>()?;
+    let app = Router::new()
+        .route("/files/*path", get(handle_get).put(handle_put))
+        .layer(CorsLayer::permissive());
+
+    println!("HTTPS server listening on {}", https_addr);
+
+    // Run both servers
+    tokio::spawn(async move {
+        axum_server::bind_rustls(https_addr, cert_chain, priv_key)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    });
 
     // Serve directory
     let serve_dir = PathBuf::from("served_files");
@@ -35,6 +56,32 @@ async fn main() -> Result<()> {
     loop {
         let connection = endpoint.accept().await;
         handle_connection(connection).await;
+    }
+}
+
+async fn handle_get(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Result<Vec<u8>, String> {
+    let path = PathBuf::from("served_files").join(path);
+    match fs::read(&path).await {
+        Ok(data) => Ok(data),
+        Err(e) => Err(format!("Failed to read file: {}", e))
+    }
+}
+
+async fn handle_put(
+    axum::extract::Path(path): axum::extract::Path<String>,
+    body: axum::body::Bytes,
+) -> Result<(), String> {
+    let path = PathBuf::from("served_files").join(path);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent).await {
+            return Err(format!("Failed to create directory: {}", e));
+        }
+    }
+    match fs::write(&path, body).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to write file: {}", e))
     }
 }
 

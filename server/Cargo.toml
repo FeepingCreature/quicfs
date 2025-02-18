@@ -11,3 +11,6 @@ rcgen = "0.11"
 directories = "5.0"
 anyhow = "1.0"
 quicfs-common = { path = "../common" }
+axum = { version = "0.7", features = ["http2"] }
+axum-server = { version = "0.6", features = ["tls-rustls"] }
+tower-http = { version = "0.5", features = ["cors"] }
