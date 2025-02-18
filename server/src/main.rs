@@ -11,6 +11,7 @@ use axum::http::Request;
 use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
 
@@ -26,8 +27,14 @@ async fn main() -> Result<()> {
     let priv_key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert_chain = vec![rustls::Certificate(cert_der)];
 
-    // Create QUIC server config
-    let quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
+    // Create QUIC server config with ALPN protocols for HTTP/3
+    let mut server_crypto = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain.clone(), priv_key.clone())?;
+    server_crypto.alpn_protocols = vec![b"h3".to_vec()];
+    
+    let mut quic_config = QuinnServerConfig::with_crypto(Arc::new(server_crypto));
     let endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
     
     println!("QUIC server config created");
