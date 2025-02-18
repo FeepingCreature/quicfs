@@ -132,32 +132,38 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                         connection.remote_address());
                     // Handle connection in a new task
                     tokio::spawn(async move {
-                        println!("Starting bi-directional stream acceptance for connection");
+                        println!("Starting HTTP/3 connection handling");
+                        
+                        let h3_conn = h3_quinn::Connection::new(connection);
+                        let mut h3 = h3::server::Connection::new(h3_conn).await.unwrap();
+                        
                         loop {
-                            let stream = match connection.accept_bi().await {
-                                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                                    println!("connection closed");
-                                    return;
+                            match h3.accept().await {
+                                Ok(Some((req, mut stream))) => {
+                                    println!("Received request: {:?}", req);
+                                    
+                                    // Create HTTP/3 response
+                                    let response = http::Response::builder()
+                                        .status(200)
+                                        .header("content-type", "text/plain")
+                                        .body(())
+                                        .unwrap();
+                                    
+                                    // Send response headers
+                                    stream.send_response(response).await.unwrap();
+                                    
+                                    // Send response body
+                                    stream.send_data(bytes::Bytes::from("Hello World!\n")).await.unwrap();
+                                    stream.finish().await.unwrap();
+                                }
+                                Ok(None) => {
+                                    println!("Connection closed");
+                                    break;
                                 }
                                 Err(e) => {
-                                    eprintln!("connection error: {}", e);
-                                    return;
+                                    eprintln!("Error accepting request: {}", e);
+                                    break;
                                 }
-                                Ok(s) => s,
-                            };
-                            
-                            let (mut send, mut _recv) = stream;
-                            println!("New stream established");
-                            
-                            // Simple response for now
-                            let response = b"HTTP/3 200 OK\r\nContent-Length: 13\r\nContent-Type: text/plain\r\n\r\nHello World!\n";
-                            if let Err(e) = send.write_all(response).await {
-                                eprintln!("Failed to send response: {}", e);
-                                continue;
-                            }
-                            
-                            if let Err(e) = send.finish() {
-                                eprintln!("Failed to finish stream: {}", e);
                             }
                         }
                     });
