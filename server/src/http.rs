@@ -49,7 +49,8 @@ impl HttpServer {
             match connection {
                 Some(conn) => {
                     println!("New QUIC connection incoming, awaiting handshake...");
-                    tokio::spawn(async move -> Result<()> {
+                    tokio::spawn(async move {
+                        let result: Result<()> = async {
                         if let Ok(connection) = conn.await {
                             println!("QUIC connection established from {}", 
                                 connection.remote_address());
@@ -89,7 +90,13 @@ impl HttpServer {
                                 send.finish().await?;
                             }
                         }
-                        Ok(())
+                            Ok(())
+                        }
+                        .await;
+                        
+                        if let Err(e) = result {
+                            eprintln!("Connection error: {}", e);
+                        }
                     });
                 }
                 None => println!("No QUIC connection available"),
