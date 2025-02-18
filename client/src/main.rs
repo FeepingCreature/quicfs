@@ -511,7 +511,7 @@ impl Filesystem for QuicFS {
         atime: Option<TimeOrNow>,
         mtime: Option<TimeOrNow>,
         _ctime: Option<SystemTime>,
-        fh: Option<u64>,
+        _fh: Option<u64>,
         _crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
@@ -540,7 +540,48 @@ impl Filesystem for QuicFS {
             attr.gid = gid;
         }
         if let Some(size) = size {
-            attr.size = size;
+            // Handle truncate by making a request to the server
+            let truncate_result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let path = self.paths.get(&ino)
+                        .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
+                        .clone();
+                    
+                    // Make a request to truncate the file
+                    let req = Request::builder()
+                        .method("PATCH")
+                        .uri(format!("{}/file{}", self.server_url, path))
+                        .header("Content-Range", format!("bytes */{}", size))
+                        .body(())?;
+
+                    let mut stream = self.send_request.send_request(req).await?;
+                    stream.finish().await?;
+                    
+                    let resp = stream.recv_response().await?;
+                    if !resp.status().is_success() {
+                        let mut body = Vec::new();
+                        while let Some(chunk) = stream.recv_data().await? {
+                            body.extend_from_slice(chunk.chunk());
+                        }
+                        let error: serde_json::Value = serde_json::from_slice(&body)?;
+                        return Err(anyhow::anyhow!("Server error: {}", 
+                            error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                    }
+                    
+                    Ok(())
+                })
+            });
+
+            match truncate_result {
+                Ok(_) => {
+                    attr.size = size;
+                }
+                Err(e) => {
+                    warn!("Failed to truncate file: {}", e);
+                    reply.error(libc::EIO);
+                    return;
+                }
+            }
         }
         if let Some(atime) = atime {
             attr.atime = match atime {
