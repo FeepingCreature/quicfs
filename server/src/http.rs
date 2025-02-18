@@ -63,7 +63,7 @@ impl HttpServer {
                             let h3_conn = h3_quinn::Connection::new(connection);
                             let mut h3: h3::server::Connection<_, Bytes> = h3::server::Connection::new(h3_conn).await?;
                             
-                            while let Ok(Some((req, stream))) = h3.accept().await {
+                            while let Ok(Some((req, mut stream))) = h3.accept().await {
                                 let path = req.uri().path().to_string();
                                 let method = req.method().clone();
                                 let headers = req.headers().clone();
