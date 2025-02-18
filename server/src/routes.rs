@@ -12,8 +12,13 @@ pub async fn list_directory(
     State(fs): State<Arc<FileSystem>>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
-    println!("Handling directory listing request for path: {}", path);
-    match fs.list_directory(&format!("/dir/{}", path)).await {
+    let dir_path = if path.is_empty() {
+        "/dir/".to_string()
+    } else {
+        format!("/dir/{}", path)
+    };
+    println!("Handling directory listing request for path: {}", dir_path);
+    match fs.list_directory(&dir_path).await {
         Ok(dir_list) => {
             println!("Directory listing successful, found {} entries", dir_list.entries.len());
             let response = (StatusCode::OK, Json(dir_list)).into_response();

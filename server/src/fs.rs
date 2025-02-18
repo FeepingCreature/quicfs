@@ -22,12 +22,12 @@ impl FileSystem {
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
-        // Remove /dir prefix and handle root path specially
-        let clean_path = path.trim_start_matches("/dir");
-        let full_path = if clean_path.is_empty() || clean_path == "/" {
+        // Handle directory paths
+        let clean_path = path.trim_start_matches("/dir").trim_start_matches('/');
+        let full_path = if clean_path.is_empty() {
             self.root.clone()
         } else {
-            self.root.join(clean_path.trim_start_matches('/'))
+            self.root.join(clean_path)
         };
         println!("Listing directory: {:?}", full_path);
         let mut entries = Vec::new();
