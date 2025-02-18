@@ -136,20 +136,25 @@ async fn handle_connection(connection: Option<quinn::Connecting>) {
                         while let Ok((mut send, mut recv)) = connection.accept_bi().await {
                             println!("New QUIC stream established");
                             
-                            // Basic HTTP/3 response
-                            let response = "HTTP/3 200 OK\r\n\
-                                         Content-Length: 13\r\n\
-                                         Content-Type: text/plain\r\n\
-                                         \r\n\
-                                         Hello World!\n";
+                            // HTTP/3 response with proper formatting
+                            let response = b"HTTP/3 200 OK\r\n\
+                                Content-Length: 13\r\n\
+                                Content-Type: text/plain\r\n\
+                                Connection: close\r\n\
+                                \r\n\
+                                Hello World!\n";
                             
-                            match send.write_all(response.as_bytes()).await {
-                                Ok(_) => {
-                                    println!("Sent HTTP/3 response");
-                                    send.finish().await.unwrap_or_else(|e| eprintln!("Failed to finish stream: {}", e));
-                                },
-                                Err(e) => eprintln!("Failed to send on stream: {}", e),
+                            if let Err(e) = send.write_all(response).await {
+                                eprintln!("Failed to send response: {}", e);
+                                continue;
                             }
+                            
+                            if let Err(e) = send.finish().await {
+                                eprintln!("Failed to finish stream: {}", e);
+                            }
+                            
+                            // Close the receiving side as well
+                            recv.stop(0u8.into());
                         }
                         println!("Connection stream loop ended");
                     });
