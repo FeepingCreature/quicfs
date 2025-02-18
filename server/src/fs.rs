@@ -84,13 +84,13 @@ impl FileSystem {
         fs::read(&full_path).await.map_err(Into::into)
     }
 
-    pub async fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
+    pub async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
         let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
         let full_path = self.root.join(clean_path);
         println!("Writing file to: {:?}", full_path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(&full_path, data).await.map_err(Into::into)
+        fs::write(&full_path, contents).await.map_err(Into::into)
     }
 }

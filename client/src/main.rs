@@ -94,18 +94,18 @@ struct QuicFS {
 }
 
 impl QuicFS {
-    async fn write_file(&mut self, path: &str, offset: u64, data: &[u8]) -> Result<()> {
+    async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let req = Request::builder()
             .method("PATCH")
             .uri(format!("{}/file{}", self.server_url, path))
             .header("Content-Range", format!("bytes {}-{}/{}", 
                 offset, 
-                offset + (data.len() as u64).saturating_sub(1),
-                offset + data.len() as u64))
-            .body(bytes::Bytes::copy_from_slice(data))?;
+                offset + (contents.len() as u64).saturating_sub(1),
+                offset + contents.len() as u64))
+            .body(bytes::Bytes::copy_from_slice(contents))?;
 
         let mut stream = self.send_request.send_request(req.map(|_| ())).await?;
-        stream.send_data(bytes::Bytes::copy_from_slice(data)).await?;
+        stream.send_data(bytes::Bytes::copy_from_slice(contents)).await?;
         stream.finish().await?;
 
         let resp = stream.recv_response().await?;
@@ -506,13 +506,13 @@ impl Filesystem for QuicFS {
         ino: u64,
         _fh: u64,
         offset: i64,
-         data: &[u8],
+        contents: &[u8],
         _write_flags: u32,
         _flags: i32,
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
-        info!("write: {} at offset {} size {}", ino, offset, data.len());
+        info!("write: {} at offset {} size {}", ino, offset, contents.len());
         info!("Known paths: {:?}", self.paths);
         
         // Look up the inode
@@ -539,12 +539,12 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                self.write_file(&path, offset as u64, data).await
+                self.write_file(&path, offset as u64, contents).await
             })
         });
 
         match write_result {
-            Ok(_) => reply.written(data.len() as u32),
+            Ok(_) => reply.written(contents.len() as u32),
             Err(e) => {
                 warn!("Failed to write file: {}", e);
                 reply.error(libc::EIO);
