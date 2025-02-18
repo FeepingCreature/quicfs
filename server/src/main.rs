@@ -106,10 +106,9 @@ async fn add_alt_svc_header(
     next: Next,
 ) -> Response {
     let mut response = next.run(request).await;
-    response.headers_mut().insert(
-        "alt-svc",
-        HeaderValue::from_static("h3=\":4433\"; ma=3600")
-    );
+    let alt_svc = HeaderValue::from_static("h3=\":4433\"; ma=3600");
+    response.headers_mut().insert("alt-svc", alt_svc.clone());
+    println!("Added Alt-Svc header: {:?}", alt_svc);
     response
 }
 
