@@ -54,8 +54,37 @@ impl HttpServer {
                                 connection.remote_address());
                             
                             let h3_conn = h3_quinn::Connection::new(connection);
-                            if let Err(e) = axum::serve(h3_conn, app).await {
-                                eprintln!("Connection error: {}", e);
+                            let mut h3 = h3::server::Connection::new(h3_conn).await?;
+                            
+                            while let Ok(Some((req, mut send))) = h3.accept().await {
+                                let path = req.uri().path().to_string();
+                                let method = req.method().clone();
+                                let headers = req.headers().clone();
+                                
+                                // Use app to route the request
+                                let response = app.call(req).await;
+                                match response {
+                                    Ok(response) => {
+                                        let (parts, body) = response.into_parts();
+                                        let h3_response = http::Response::from_parts(parts, ());
+                                        send.send_response(h3_response).await?;
+                                        
+                                        // Send body if any
+                                        if let Some(body) = body.data().await {
+                                            if let Ok(data) = body {
+                                                send.send_data(data).await?;
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Error handling request: {}", e);
+                                        let response = http::Response::builder()
+                                            .status(500)
+                                            .body(())?;
+                                        send.send_response(response).await?;
+                                    }
+                                }
+                                send.finish().await?;
                             }
                         }
                     });
