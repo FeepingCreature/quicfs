@@ -14,6 +14,7 @@ use quicfs_common::types::DirList;
 use futures::future;
 use http::Request;
 use bytes::Buf;
+use quinn::rustls::{self, pki_types, client::danger};
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -29,7 +30,7 @@ struct Opts {
 }
 
 #[derive(Debug)]
-struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
+struct SkipServerVerification(Arc<rustls::crypto::ring::CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
@@ -37,16 +38,16 @@ impl SkipServerVerification {
     }
 }
 
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+impl danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
+        _end_entity: &pki_types::CertificateDer<'_>,
+        _intermediates: &[pki_types::CertificateDer<'_>],
+        _server_name: &pki_types::ServerName<'_>,
         _ocsp: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _now: pki_types::UnixTime,
+    ) -> Result<danger::ServerCertVerified, rustls::Error> {
+        Ok(danger::ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(
