@@ -23,20 +23,58 @@ struct Opts {
 }
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+// Temporary certificate verification skip for development
+struct SkipServerVerification;
+
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
 
 const ROOT_INODE: u64 = 1;
 
 struct QuicFS {
-    // TODO: Add HTTP/3 client here
+    client: h3::client::Connection<h3_quinn::Connection>,
     inodes: HashMap<u64, FileAttr>,
     next_inode: u64,
+    server_url: String,
 }
 
 impl QuicFS {
-    fn new() -> Self {
+    async fn new(server_url: String) -> Result<Self> {
+        // Parse server URL and connect
+        let url = server_url.parse::<http::Uri>()?;
+        let host = url.host().unwrap();
+        let port = url.port_u16().unwrap_or(4433);
+        
+        let client_config = quinn::ClientConfig::new(Arc::new(quinn::rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
+            .with_no_client_auth()));
+
+        let endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
+        let connection = endpoint.connect_with(client_config, (host, port), host)?
+            .await?;
+            
+        let h3_conn = h3_quinn::Connection::new(connection);
+        let client = h3::client::Connection::new(h3_conn).await?;
+
         let mut fs = QuicFS {
+            client,
             inodes: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
+            server_url,
         };
         
         // Create root directory
@@ -115,8 +153,22 @@ impl Filesystem for QuicFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        warn!("readdir: {} at offset {}", ino, offset);
-        reply.error(ENOENT);
+        info!("readdir: {} at offset {}", ino, offset);
+        
+        if ino != ROOT_INODE {
+            reply.error(ENOENT);
+            return;
+        }
+
+        // Standard directory entries
+        if offset == 0 {
+            reply.add(ROOT_INODE, 1, FileType::Directory, ".");
+            reply.add(ROOT_INODE, 2, FileType::Directory, "..");
+        }
+
+        // TODO: Fetch directory contents from server
+        // For now, just return the standard entries
+        reply.ok();
     }
 }
 
@@ -127,7 +179,7 @@ async fn main() -> Result<()> {
     
     info!("Mounting QuicFS at {} with server {}", opts.mountpoint, opts.server);
     
-    let fs = QuicFS::new();
+    let fs = QuicFS::new(opts.server).await?;
     
     fuser::mount2(
         fs,
