@@ -37,8 +37,8 @@ async fn main() -> Result<()> {
         .with_single_cert(cert_chain.clone(), priv_key.clone())?;
     server_crypto.alpn_protocols = vec![b"h3".to_vec()];
     
-    let server_config = QuinnServerConfig::with_crypto(Arc::new(server_crypto));
-    let endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
+    let server_config = QuinnServerConfig::try_from(server_crypto)?;
+    let endpoint = Endpoint::server(server_config, "0.0.0.0:4433".parse()?)?;
     
     println!("QUIC server config created");
     
@@ -124,7 +124,7 @@ async fn add_alt_svc_header(
     response
 }
 
-async fn handle_connection(connection: Option<quinn::Connecting>) {
+async fn handle_connection(connection: Option<quinn::Incoming>) {
     match connection {
         Some(conn) => {
             println!("New QUIC connection incoming, awaiting handshake...");
@@ -136,10 +136,10 @@ async fn handle_connection(connection: Option<quinn::Connecting>) {
                     // Handle connection in a new task
                     tokio::spawn(async move {
                         println!("Starting bi-directional stream acceptance for connection");
-                        let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection));
+                        let h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(connection));
                         println!("Starting HTTP/3 connection handling");
                         
-                        while let Ok(Some((req, mut sender))) = h3_conn.accept().await {
+                        while let Ok(Some((req, mut sender))) = h3_conn.accept_request().await {
                             println!("New HTTP/3 request: {:?}", req);
                             
                             // Create HTTP response
