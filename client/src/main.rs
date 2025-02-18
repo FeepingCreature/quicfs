@@ -416,9 +416,10 @@ impl Filesystem for QuicFS {
             tokio::runtime::Handle::current().block_on(async {
                 // Get the stored path for this inode
                 let path = self.paths.get(&ino)
-                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?;
+                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
+                    .clone();
                 
-                self.read_file(path, offset as u64, _size).await
+                self.read_file(&path, offset as u64, _size).await
             })
         });
 
