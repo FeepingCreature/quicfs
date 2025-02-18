@@ -8,6 +8,7 @@ use axum::{
 use tower::Service;
 use http::Request;
 use http_body_util::BodyExt;
+use bytes::Bytes;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{fs::FileSystem, routes};
@@ -59,7 +60,7 @@ impl HttpServer {
                                 connection.remote_address());
                             
                             let h3_conn = h3_quinn::Connection::new(connection);
-                            let mut h3 = h3::server::Connection::new(h3_conn).await?;
+                            let mut h3: h3::server::Connection<_, Bytes> = h3::server::Connection::new(h3_conn).await?;
                             
                             while let Ok(Some((req, mut send))) = h3.accept().await {
                                 let path = req.uri().path().to_string();
