@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
     let https_addr = "0.0.0.0:8443".parse::<SocketAddr>()?;
     let app = Router::new()
         .route("/files/*path", get(handle_get).put(handle_put))
-        .layer(CorsLayer::permissive())
         .layer(middleware::from_fn(add_alt_svc_header));
 
     println!("HTTPS server listening on {}", https_addr);
