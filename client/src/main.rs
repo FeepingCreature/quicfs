@@ -423,9 +423,10 @@ impl Filesystem for QuicFS {
 
                     // Store both the attributes and the path
                     self.paths.insert(ino, format!("/{}", entry.name));
-                    self.inodes.insert(ino, attr);
-                    info!("Mapped inode {} to path {}", ino, format!("/{}", entry.name));
+                    self.inodes.insert(ino, attr.clone());
+                    info!("Mapped inode {} to path {} with size {}", ino, format!("/{}", entry.name), attr.size);
                     self.next_inode += 1;
+                    info!("Returning lookup response with inode {} and size {}", attr.ino, attr.size);
                     reply.entry(&TTL, &attr, 0);
                 } else {
                     reply.error(ENOENT);
