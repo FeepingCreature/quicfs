@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use anyhow::Result;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
-use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
+use serde_json;
 
 pub struct HttpServer {
     endpoint: Endpoint,
@@ -10,7 +11,7 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn new(cert_chain: Vec<CertificateDer>, private_key: PrivateKeyDer, fs: FileSystem) -> Result<Self> {
+    pub fn new(cert_chain: Vec<CertificateDer<'static>>, private_key: PrivateKeyDer<'static>, fs: FileSystem) -> Result<Self> {
         // Create QUIC server config with ALPN protocols for HTTP/3
         let mut server_crypto = quinn::rustls::ServerConfig::builder()
             .with_no_client_auth()
