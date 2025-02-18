@@ -205,8 +205,56 @@ impl Filesystem for QuicFS {
             return;
         }
         
-        // TODO: Actually look up files/directories from server
-        reply.error(ENOENT);
+        // Make a request to the server to look up the file
+        let lookup_result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.list_directory("/").await
+            })
+        });
+
+        match lookup_result {
+            Ok(dir_list) => {
+                // Look for the file in the directory listing
+                if let Some(entry) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
+                    let file_type = match entry.type_.as_str() {
+                        "file" => FileType::RegularFile,
+                        "dir" => FileType::Directory,
+                        _ => {
+                            reply.error(ENOENT);
+                            return;
+                        }
+                    };
+
+                    let attr = FileAttr {
+                        ino: self.next_inode,
+                        size: entry.size,
+                        blocks: (entry.size + 511) / 512,
+                        atime: SystemTime::now(),
+                        mtime: SystemTime::now(),
+                        ctime: SystemTime::now(),
+                        crtime: SystemTime::now(),
+                        kind: file_type,
+                        perm: entry.mode as u16,
+                        nlink: 1,
+                        uid: 1000,
+                        gid: 1000,
+                        rdev: 0,
+                        flags: 0,
+                        blksize: 512,
+                    };
+
+                    self.inodes.insert(self.next_inode, attr);
+                    self.next_inode += 1;
+                    reply.entry(&TTL, &attr, 0);
+                } else {
+                    reply.error(ENOENT);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to look up file: {}", e);
+                reply.error(libc::EIO);
+            }
+        }
     }
 
     fn getattr(&mut self, _req: &FuseRequest, ino: u64, reply: ReplyAttr) {

@@ -68,7 +68,11 @@ async fn handle_connection(connection: quinn::Connection, fs: Arc<FileSystem>) -
                 println!("Processing request path: {}", req.uri().path());
                 
                 // Handle directory listing
+                println!("Full request URI: {}", req.uri());
+                println!("Request headers: {:?}", req.headers());
+                
                 if req.uri().path().starts_with("/dir") {
+                    println!("Processing directory listing request");
                     match fs.list_directory(req.uri().path()).await {
                         Ok(dir_list) => {
                             let json = serde_json::to_string(&dir_list)?;
