@@ -106,9 +106,13 @@ impl FileSystem {
         }
 
         // Write the new data at the specified offset
-        let write_len = contents.len();
-        contents[offset as usize..offset as usize + write_len]
+        let mut new_contents = contents.clone();
+        if offset as usize + contents.len() > new_contents.len() {
+            new_contents.resize(offset as usize + contents.len(), 0);
+        }
+        new_contents[offset as usize..offset as usize + contents.len()]
             .copy_from_slice(contents);
+        contents = new_contents;
 
         println!("Final file size will be: {} bytes", contents.len());
         fs::write(&full_path, contents).await.map_err(Into::into)
