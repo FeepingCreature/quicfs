@@ -59,11 +59,28 @@ pub async fn read_file(
 pub async fn write_file(
     State(fs): State<Arc<FileSystem>>,
     Path(path): Path<String>,
+    headers: http::HeaderMap,
     bytes: Bytes,
 ) -> impl IntoResponse {
     println!("Write request received for path: /file/{}", path);
     println!("Received {} bytes of data", bytes.len());
-    match fs.write_file(&format!("/file/{}", path), &bytes).await {
+    println!("Headers: {:?}", headers);
+    
+    // Parse Content-Range header if present
+    let offset = headers
+        .get("Content-Range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            if let Some(range) = v.strip_prefix("bytes ") {
+                range.split('-').next().and_then(|s| s.parse::<u64>().ok())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    println!("Writing at offset: {}", offset);
+    match fs.write_file(&format!("/file/{}", path), offset, &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

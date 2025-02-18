@@ -539,7 +539,10 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                self.write_file(&path, offset as u64, contents).await
+                info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
+                let result = self.write_file(&path, offset as u64, contents).await;
+                info!("Write result: {:?}", result);
+                result
             })
         });
 
