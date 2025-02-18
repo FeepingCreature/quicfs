@@ -333,6 +333,17 @@ impl Filesystem for QuicFS {
             Ok(dir_list) => {
                 // Look for the file in the directory listing
                 if let Some(entry) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
+                    // Check if we already have this path mapped to an inode
+                    let path = format!("/{}", entry.name);
+                    if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == path) {
+                        // Reuse existing inode
+                        if let Some(attr) = self.inodes.get(&existing_ino) {
+                            reply.entry(&TTL, attr, 0);
+                            return;
+                        }
+                    }
+
+                    // If not found, create new inode
                     let file_type = match entry.type_.as_str() {
                         "file" => FileType::RegularFile,
                         "dir" => FileType::Directory,
