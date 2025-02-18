@@ -392,9 +392,65 @@ impl Filesystem for QuicFS {
     fn getattr(&mut self, _req: &FuseRequest, ino: u64, reply: ReplyAttr) {
         info!("getattr: {}", ino);
         
-        match self.inodes.get(&ino) {
-            Some(attr) => reply.attr(&TTL, attr),
-            None => reply.error(ENOENT),
+        // For root directory, just return cached attributes
+        if ino == ROOT_INODE {
+            if let Some(attr) = self.inodes.get(&ino) {
+                reply.attr(&TTL, attr);
+                return;
+            }
+        }
+
+        // For files, fetch current attributes from server
+        let attr_result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                // Get the stored path for this inode
+                let path = self.paths.get(&ino)
+                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
+                    .clone();
+                
+                // Make request to list the parent directory
+                let parent_path = std::path::Path::new(&path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "/".to_string());
+                
+                let dir_list = self.list_directory(&parent_path).await?;
+                
+                // Find the file in the directory listing
+                let filename = std::path::Path::new(&path)
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid path"))?
+                    .to_string_lossy();
+                
+                let entry = dir_list.entries.iter()
+                    .find(|e| e.name == filename)
+                    .ok_or_else(|| anyhow::anyhow!("File not found in directory listing"))?;
+
+                // Update our cached attributes with the current size
+                let mut attr = self.inodes.get(&ino)
+                    .ok_or_else(|| anyhow::anyhow!("Inode not found"))?
+                    .clone();
+                
+                attr.size = entry.size;
+                attr.blocks = (entry.size + 511) / 512;
+                
+                // Update the cache
+                self.inodes.insert(ino, attr.clone());
+                
+                Ok(attr)
+            })
+        });
+
+        match attr_result {
+            Ok(attr) => reply.attr(&TTL, &attr),
+            Err(e) => {
+                warn!("Failed to get attributes: {}", e);
+                // Fall back to cached attributes if available
+                match self.inodes.get(&ino) {
+                    Some(attr) => reply.attr(&TTL, attr),
+                    None => reply.error(ENOENT),
+                }
+            }
         }
     }
 
