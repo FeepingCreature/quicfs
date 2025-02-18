@@ -93,6 +93,35 @@ struct QuicFS {
 }
 
 impl QuicFS {
+    async fn write_file(&mut self, path: &str, offset: u64, data: &[u8]) -> Result<()> {
+        let req = Request::builder()
+            .method("PATCH")
+            .uri(format!("{}/file{}", self.server_url, path))
+            .header("Content-Range", format!("bytes {}-{}/{}", 
+                offset, 
+                offset + data.len() as u64 - 1,
+                offset + data.len() as u64))
+            .body(bytes::Bytes::copy_from_slice(data))?;
+
+        let mut stream = self.send_request.send_request(req).await?;
+        stream.send_data(bytes::Bytes::copy_from_slice(data)).await?;
+        stream.finish().await?;
+
+        let resp = stream.recv_response().await?;
+        
+        if !resp.status().is_success() {
+            let mut body = Vec::new();
+            while let Some(chunk) = stream.recv_data().await? {
+                body.extend_from_slice(chunk.chunk());
+            }
+            let error: serde_json::Value = serde_json::from_slice(&body)?;
+            return Err(anyhow::anyhow!("Server error: {}", 
+                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+        }
+
+        Ok(())
+    }
+
     async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
         let req = Request::builder()
             .method("GET")
@@ -405,6 +434,57 @@ impl Filesystem for QuicFS {
             }
         }
     }
+
+    fn write(
+        &mut self,
+        _req: &FuseRequest,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+         &[u8],
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: fuser::ReplyWrite,
+    ) {
+        info!("write: {} at offset {} size {}", ino, offset, data.len());
+        
+        // Look up the inode
+        let attr = match self.inodes.get(&ino) {
+            Some(attr) => attr,
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        // Only allow writing to regular files
+        if attr.kind != FileType::RegularFile {
+            reply.error(libc::EISDIR);
+            return;
+        }
+
+        // Make request to server
+        let write_result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                // Find the file path from the inode
+                let path = self.inodes.iter()
+                    .find(|(i, attr)| *i == &ino && attr.kind == FileType::RegularFile)
+                    .map(|(_, _)| "/hello.txt")  // TODO: Store actual paths
+                    .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+                
+                self.write_file(path, offset as u64, data).await
+            })
+        });
+
+        match write_result {
+            Ok(_) => reply.written(data.len() as u32),
+            Err(e) => {
+                warn!("Failed to write file: {}", e);
+                reply.error(libc::EIO);
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -428,7 +508,7 @@ async fn main() -> Result<()> {
     match fuser::mount2(
         fs,
         &opts.mountpoint,
-        &[MountOption::RO, MountOption::FSName("quicfs".to_string())],
+        &[MountOption::FSName("quicfs".to_string())],
     ) {
         Ok(_) => {
             info!("Filesystem mounted successfully");

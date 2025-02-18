@@ -100,7 +100,52 @@ async fn handle_connection(connection: quinn::Connection, fs: Arc<FileSystem>) -
                     }
                 } else if req.uri().path().starts_with("/file") {
                     // Handle file operations
-                    match fs.read_file(req.uri().path()).await {
+                    if req.method() == "PATCH" {
+                        // Handle write request
+                        let mut body = Vec::new();
+                        while let Some(chunk) = stream.recv_data().await? {
+                            body.extend_from_slice(chunk.chunk());
+                        }
+                        
+                        // Parse Content-Range header
+                        let range = req.headers().get("Content-Range")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| {
+                                let parts: Vec<&str> = s.split(' ').collect();
+                                if parts.len() != 2 { return None; }
+                                let range_parts: Vec<&str> = parts[1].split('-').collect();
+                                if range_parts.len() != 2 { return None; }
+                                Some((
+                                    range_parts[0].parse::<u64>().ok()?,
+                                    range_parts[1].split('/').next()?.parse::<u64>().ok()?
+                                ))
+                            })
+                            .ok_or_else(|| anyhow::anyhow!("Invalid Content-Range header"))?;
+
+                        match fs.write_file(req.uri().path(), range.0, &body).await {
+                            Ok(_) => {
+                                let response = http::Response::builder()
+                                    .status(200)
+                                    .body(())?;
+                                stream.send_response(response).await?;
+                            },
+                            Err(e) => {
+                                let response = http::Response::builder()
+                                    .status(500)
+                                    .header("content-type", "application/json")
+                                    .body(())?;
+                                
+                                let error_json = serde_json::json!({
+                                    "error": e.to_string()
+                                }).to_string();
+                                
+                                stream.send_response(response).await?;
+                                stream.send_data(bytes::Bytes::from(error_json)).await?;
+                            }
+                        }
+                    } else {
+                        // Handle read request
+                        match fs.read_file(req.uri().path()).await {
                         Ok(data) => {
                             let response = http::Response::builder()
                                 .status(200)
