@@ -414,8 +414,9 @@ impl Filesystem for QuicFS {
         // Make request to server
         let read_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                // For now, just use the name from the parent directory listing
-                let path = format!("/{}", name.to_string_lossy());
+                // Get the stored path for this inode
+                let path = self.paths.get(&ino)
+                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?;
                 
                 self.read_file(path, offset as u64, _size).await
             })
@@ -527,10 +528,12 @@ impl Filesystem for QuicFS {
         let write_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 // Get the stored path for this inode
+                // Clone the path string to avoid borrow checker issues
                 let path = self.paths.get(&ino)
-                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?;
+                    .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
+                    .clone();
                 
-                self.write_file(path, offset as u64, data).await
+                self.write_file(&path, offset as u64, data).await
             })
         });
 
