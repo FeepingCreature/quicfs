@@ -78,13 +78,13 @@ impl HttpServer {
                                         
                                         // Convert axum body to bytes
                                         match body.frame().await {
-                                            Ok(Some(frame)) => {
+                                            Some(Ok(frame)) => {
                                                 if let Ok(data) = frame.into_data() {
                                                     send.send_data(data.into()).await?;
                                                 }
                                             }
-                                            Ok(None) => (),
-                                            Err(e) => return Err(anyhow::anyhow!("Body error: {}", e)),
+                                            Some(Err(e)) => return Err(anyhow::anyhow!("Body error: {}", e)),
+                                            None => (),
                                         }
                                     },
                                     Err(e) => {
