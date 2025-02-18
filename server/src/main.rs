@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     }
 
     // Create HTTPS server
-    let https_addr = "0.0.0.0:443".parse::<SocketAddr>()?;
+    let https_addr = "0.0.0.0:8443".parse::<SocketAddr>()?;
     let app = Router::new()
         .route("/files/*path", get(handle_get).put(handle_put))
         .layer(CorsLayer::permissive());
@@ -39,8 +39,14 @@ async fn main() -> Result<()> {
     println!("HTTPS server listening on {}", https_addr);
 
     // Run both servers
+    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
+        cert_chain[0].0.clone(),
+        priv_key.0.clone(),
+    )
+    .expect("Failed to create HTTPS config");
+
     tokio::spawn(async move {
-        axum_server::bind_rustls(https_addr, cert_chain, priv_key)
+        axum_server::bind_rustls(https_addr, rustls_config)
             .serve(app.into_make_service())
             .await
             .unwrap();
