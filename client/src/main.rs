@@ -33,9 +33,9 @@ struct SkipServerVerification;
 impl rustls::client::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
         _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: std::time::SystemTime,
@@ -61,13 +61,14 @@ impl QuicFS {
             .body(())?;
 
         let mut resp = self.client.send_request(req).await?;
+        resp.finish().await?;
         let (parts, body) = resp.into_parts();
         
         if !parts.status.is_success() {
             return Err(anyhow::anyhow!("Server returned error: {}", parts.status));
         }
 
-        let body = h3::client::read_body(&mut body).await?;
+        let body = body.recv_response()?.await?;
         let dir_list: DirList = serde_json::from_slice(&body)?;
         Ok(dir_list)
     }
@@ -78,12 +79,13 @@ impl QuicFS {
         let host = url.host().unwrap();
         let port = url.port_u16().unwrap_or(4433);
         
-        let client_config = quinn::ClientConfig::new(Arc::new(rustls::ClientConfig::builder()
-            .with_safe_default_cipher_suites()
-            .with_safe_default_kx_groups()
-            .with_safe_default_protocol_versions()?
+        let mut crypto_config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
-            .with_no_client_auth()));
+            .with_no_client_auth();
+        
+        crypto_config.alpn_protocols = vec![b"h3".to_vec()];
+        let client_config = quinn::ClientConfig::new(Arc::new(crypto_config));
 
         let endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
         let addr = format!("{}:{}", host, port).parse()?;
