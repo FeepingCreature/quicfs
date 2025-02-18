@@ -114,8 +114,14 @@ pub async fn write_file(
                     }
                 };
 
-                // For a range like "0-0/0", we want length 0
-                let expected_len = if end >= start { end - start + 1 } else { 0 };
+                // For a range like "0-0/0", we want length 1 only if total > 0
+                let expected_len = if total == 0 {
+                    0  // Special case for empty file creation
+                } else if end >= start {
+                    end - start + 1
+                } else {
+                    0
+                };
                 println!("Calculated expected_len={} from start={}, end={}", expected_len, start, end);
                 if bytes.len() as u64 != expected_len {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
