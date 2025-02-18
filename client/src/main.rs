@@ -125,7 +125,7 @@ impl QuicFS {
         let port = url.port_u16().unwrap_or(4433);
         info!("Connecting to {}:{}", host, port);
         
-        let mut endpoint = quinn::Endpoint::client("[::]:0".parse()?)?;
+        let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
         
         let mut crypto_config = rustls::ClientConfig::builder()
             .dangerous()
@@ -140,10 +140,8 @@ impl QuicFS {
         ));
         endpoint.set_default_client_config(client_config);
 
-        let addr = tokio::net::lookup_host((host, port))
-            .await?
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("DNS lookup failed"))?;
+        // Force IPv4 lookup
+        let addr = format!("{}:{}", host, port).parse()?;
         let connection = endpoint.connect(addr, host)?.await?;
             
         let h3_conn = h3_quinn::Connection::new(connection);
