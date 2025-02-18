@@ -18,21 +18,26 @@ pub async fn list_directory(
         format!("/dir/{}", path)
     };
     println!("Handling directory listing request for path: {}", dir_path);
+    println!("Attempting to list directory at path: {:?}", dir_path);
     match fs.list_directory(&dir_path).await {
         Ok(dir_list) => {
             println!("Directory listing successful, found {} entries", dir_list.entries.len());
             let response = (StatusCode::OK, Json(dir_list)).into_response();
-            println!("Sending directory listing response");
+            println!("Sending directory listing response: {:?}", response);
             response
         },
         Err(err) => {
             println!("Error listing directory: {}", err);
-            (
+            println!("Error details: {:?}", err);
+            let error_response = (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
-                    "error": err.to_string()
+                    "error": err.to_string(),
+                    "details": format!("{:?}", err)
                 }))
-            ).into_response()
+            ).into_response();
+            println!("Sending error response: {:?}", error_response);
+            error_response
         },
     }
 }

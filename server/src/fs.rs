@@ -38,11 +38,13 @@ impl FileSystem {
 
         println!("Reading directory contents from {:?}...", full_path);
         if !full_path.exists() {
-            println!("Path does not exist!");
+            println!("Path does not exist: {:?}", full_path);
+            println!("Current directory: {:?}", std::env::current_dir()?);
             return Err(anyhow::anyhow!("Directory does not exist: {:?}", full_path));
         }
         if !full_path.is_dir() {
-            println!("Path is not a directory!");
+            println!("Path is not a directory: {:?}", full_path);
+            println!("Metadata: {:?}", full_path.metadata()?);
             return Err(anyhow::anyhow!("Path is not a directory: {:?}", full_path));
         }
         let mut dir = fs::read_dir(&full_path).await?;
