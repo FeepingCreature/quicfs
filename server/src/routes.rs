@@ -10,12 +10,11 @@ use crate::fs::FileSystem;
 
 pub async fn list_directory(
     State(fs): State<Arc<FileSystem>>,
-    Path(path): Path<String>,
+    path: Option<Path<String>>,
 ) -> impl IntoResponse {
-    let dir_path = if path.is_empty() {
-        "/dir/".to_string()
-    } else {
-        format!("/dir/{}", path)
+    let dir_path = match path {
+        Some(Path(p)) => format!("/dir/{}", p),
+        None => "/dir/".to_string(),
     };
     println!("Handling directory listing request for path: {}", dir_path);
     println!("Attempting to list directory at path: {:?}", dir_path);
