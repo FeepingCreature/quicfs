@@ -137,7 +137,10 @@ impl QuicFS {
         ));
         endpoint.set_default_client_config(client_config);
 
-        let addr = format!("{}:{}", host, port).parse()?;
+        let addr = tokio::net::lookup_host((host, port))
+            .await?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("DNS lookup failed"))?;
         let connection = endpoint.connect(addr, host)?.await?;
             
         let h3_conn = h3_quinn::Connection::new(connection);
