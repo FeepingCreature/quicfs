@@ -13,9 +13,12 @@ use tower_http::cors::CorsLayer;
 async fn main() -> Result<()> {
     // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+    let cert_pem = cert.serialize_pem()?;
+    let key_pem = cert.serialize_private_key_pem();
+    
+    // For QUIC server (needs DER format)
     let cert_der = cert.serialize_der()?;
-    let priv_key = cert.serialize_private_key_der();
-    let priv_key = rustls::PrivateKey(priv_key);
+    let priv_key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert_chain = vec![rustls::Certificate(cert_der)];
 
     // Create QUIC server config
@@ -40,8 +43,8 @@ async fn main() -> Result<()> {
 
     // Run both servers
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        cert_chain[0].0.clone(),
-        priv_key.0.clone(),
+        cert_pem.as_bytes().to_vec(),
+        key_pem.as_bytes().to_vec(),
     )
     .await
     .expect("Failed to create HTTPS config");
