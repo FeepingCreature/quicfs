@@ -7,6 +7,7 @@ use axum::{
 };
 use tower::Service;
 use http::Request;
+use http_body_util::BodyExt;
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{fs::FileSystem, routes};
@@ -75,10 +76,9 @@ impl HttpServer {
                                         let h3_response = http::Response::from_parts(parts, ());
                                         send.send_response(h3_response).await?;
                                         
-                                        // Collect and send body
-                                        let body_bytes = body.collect().await?.to_bytes();
-                                        if !body_bytes.is_empty() {
-                                            send.send_data(body_bytes.into()).await?;
+                                        // Convert axum body to bytes
+                                        if let Some(data) = body.frame().await? {
+                                            send.send_data(data.into_data()?.into()).await?;
                                         }
                                     },
                                     Err(e) => {
