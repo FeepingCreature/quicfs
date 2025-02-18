@@ -1,27 +1,29 @@
 # QuicFS HTTP/3 API Specification
 
-All paths must be valid UTF-8. All responses include a `status` field indicating success/failure.
+All paths must be valid UTF-8.
 Errors return appropriate HTTP status codes and include an `error` field in the JSON response.
 
 ## File Operations
 
 ### Read File
-GET `/fs/file/read`
-- Query params: 
-  - `path`: UTF-8 file path
-  - `offset`: byte offset (integer)
-  - `length`: number of bytes to read
-- Success: 200 OK with raw bytes
+GET `/file/*path`
+- Headers:
+  - `Range: bytes=start-end` (optional)
+- Success: 
+  - 200 OK with complete file content
+  - 206 Partial Content with requested range
+  - Headers:
+    - `Content-Range: bytes start-end/total`
+    - `Accept-Ranges: bytes`
 - Errors:
   - 404: File not found
   - 400: Invalid offset/length
   - 403: Permission denied
 
-### Write File
-PUT `/fs/file/write`
-- Query params:
-  - `path`: UTF-8 file path
-  - `offset`: byte offset (integer)
+### Write File Range
+PATCH `/file/*path`
+- Headers:
+  - `Content-Range: bytes start-end/total`
 - Body: raw bytes to write
 - Success: 200 OK
 - Errors:
@@ -30,7 +32,7 @@ PUT `/fs/file/write`
   - 507: Insufficient storage
 
 ### Create File
-POST `/fs/file/create`
+PUT `/file/*path`
 - Query params:
   - `path`: UTF-8 file path
   - `mode`: Unix permissions (optional, default 0644)
