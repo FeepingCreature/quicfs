@@ -8,15 +8,13 @@ use axum::{
 };
 use axum::body::Body;
 use axum::http::Request;
-use quinn::{Endpoint, ServerConfig as QuinnServerConfig};
+use quinn::Endpoint;
+use quinn::crypto::rustls::QuicServerConfig;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tower_http::cors::CorsLayer;
-use h3_quinn;
-use bytes;
-use http;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,7 +35,7 @@ async fn main() -> Result<()> {
         .with_single_cert(cert_chain.clone(), priv_key.clone())?;
     server_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
     let endpoint = Endpoint::server(server_config, "0.0.0.0:4433".parse()?)?;
     
     println!("QUIC server config created");
@@ -159,7 +157,7 @@ async fn handle_connection(connection: Option<quinn::Incoming>) {
                                 continue;
                             }
                             
-                            if let Err(e) = send.finish().await {
+                            if let Err(e) = send.finish() {
                                 eprintln!("Failed to finish stream: {}", e);
                             }
                         }
