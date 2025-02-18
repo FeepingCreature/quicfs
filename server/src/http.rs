@@ -102,10 +102,15 @@ impl HttpServer {
                                     },
                                     Err(e) => {
                                         eprintln!("Error handling request: {}", e);
+                                        let error_body = format!("Internal server error: {}", e);
+                                        println!("Error body: {}", error_body);
                                         let response = http::Response::builder()
                                             .status(500)
+                                            .header("content-type", "text/plain")
+                                            .header("content-length", error_body.len().to_string())
                                             .body(())?;
                                         send.send_response(response).await?;
+                                        send.send_data(error_body.into()).await?;
                                     }
                                 }
                                 send.finish().await?;
