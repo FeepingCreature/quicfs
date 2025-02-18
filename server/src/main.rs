@@ -31,13 +31,7 @@ async fn main() -> Result<()> {
     let mut quic_config = QuinnServerConfig::with_single_cert(cert_chain.clone(), priv_key.clone())?;
     let mut endpoint = Endpoint::server(quic_config, "0.0.0.0:4433".parse()?)?;
     
-    // Configure endpoint for UDP
-    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
-        rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(cert_chain.clone(), priv_key.clone())?
-    )));
+    println!("QUIC server config created");
     
     match endpoint.local_addr() {
         Ok(local_addr) => println!("QUIC server bound to {}", local_addr),
@@ -75,8 +69,11 @@ async fn main() -> Result<()> {
         println!("Created served_files directory");
     }
 
+    println!("Starting QUIC connection acceptance loop");
     loop {
+        println!("Waiting for QUIC connection...");
         let connection = endpoint.accept().await;
+        println!("QUIC connection attempt received: {:?}", connection.is_some());
         handle_connection(connection).await;
     }
 }
@@ -121,23 +118,31 @@ async fn add_alt_svc_header(
 async fn handle_connection(connection: Option<quinn::Connecting>) {
     match connection {
         Some(conn) => {
+            println!("New QUIC connection incoming, awaiting handshake...");
             let connecting = conn.await;
             match connecting {
                 Ok(connection) => {
-                    println!("Connection established from {}", connection.remote_address());
+                    println!("QUIC connection established from {} with protocol: {:?}", 
+                        connection.remote_address(),
+                        connection.protocol());
                     // Handle connection in a new task
                     tokio::spawn(async move {
+                        println!("Starting bi-directional stream acceptance for connection");
                         while let Ok((mut send, _recv)) = connection.accept_bi().await {
-                            println!("New stream established");
+                            println!("New QUIC stream established");
                             // Here you would implement the actual file serving logic
                             // This is just a placeholder that acknowledges the stream
-                            let _ = send.write_all(b"Hello from Quinn server!").await;
+                            match send.write_all(b"Hello from Quinn server!").await {
+                                Ok(_) => println!("Sent hello message on stream"),
+                                Err(e) => eprintln!("Failed to send on stream: {}", e),
+                            }
                         }
+                        println!("Connection stream loop ended");
                     });
                 }
-                Err(e) => eprintln!("Connection failed: {}", e),
+                Err(e) => eprintln!("QUIC connection handshake failed: {}", e),
             }
         }
-        None => (),
+        None => println!("No QUIC connection available"),
     }
 }
