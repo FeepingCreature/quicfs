@@ -97,7 +97,7 @@ impl QuicFS {
     async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let req = Request::builder()
             .method("PATCH")
-            .uri(format!("{}/file{}", self.server_url, path))
+            .uri(format!("{}/file/{}", self.server_url, path))
             .header("Content-Range", format!("bytes {}-{}/{}", 
                 offset, 
                 offset + (contents.len() as u64).saturating_sub(1),
@@ -127,7 +127,7 @@ impl QuicFS {
     async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
         let req = Request::builder()
             .method("GET")
-            .uri(format!("{}/file{}", self.server_url, path))
+            .uri(format!("{}/file/{}", self.server_url, path))
             .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
             .body(())?;
 
