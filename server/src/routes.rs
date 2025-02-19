@@ -14,7 +14,10 @@ pub async fn list_directory(
     path: Option<Path<String>>,
 ) -> impl IntoResponse {
     let dir_path = match path {
-        Some(Path(p)) => format!("/dir/{}", urlencoding::decode(&p).unwrap_or(p.into())),
+        Some(Path(p)) => {
+            let decoded = urlencoding::decode(&p).unwrap_or_else(|_| p.clone());
+            format!("/dir/{}", decoded)
+        },
         None => "/dir/".to_string(),
     };
     info!("GET /dir/{}", dir_path);
@@ -40,7 +43,7 @@ pub async fn read_file(
     State(fs): State<Arc<FileSystem>>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
-    match fs.read_file(&format!("/file/{}", urlencoding::decode(&path).unwrap_or(path.into()))).await {
+    match fs.read_file(&format!("/file/{}", urlencoding::decode(&path).unwrap_or_else(|_| path.clone()))).await {
         Ok(data) => (StatusCode::OK, Bytes::from(data)).into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -57,7 +60,7 @@ pub async fn write_file(
     headers: http::HeaderMap,
     bytes: Bytes,
 ) -> impl IntoResponse {
-    let decoded_path = urlencoding::decode(&path).unwrap_or(path.clone().into());
+    let decoded_path = urlencoding::decode(&path).unwrap_or_else(|_| path.clone());
     info!("PATCH /file/{} with {} bytes", decoded_path, bytes.len());
     
     // Parse and validate Content-Range header
