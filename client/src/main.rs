@@ -333,7 +333,8 @@ impl Filesystem for QuicFS {
                 let create_result = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
                         let path = format!("/{}", name.to_string_lossy());
-                        self.write_file(&path, 0, &[]).await
+                        let encoded_path = urlencoding::encode(&path);
+                        self.write_file(&encoded_path, 0, &[]).await
                     })
                 });
 
