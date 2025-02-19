@@ -97,7 +97,7 @@ impl QuicFS {
     async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let req = Request::builder()
             .method("PATCH")
-            .uri(format!("{}/file/{}", self.server_url, path))
+            .uri(format!("{}/file/{}", self.server_url, path.trim_start_matches('/')))
             .header("Content-Range", format!("bytes {}-{}/{}", 
                 offset, 
                 offset + (contents.len() as u64).saturating_sub(1),
@@ -434,7 +434,7 @@ impl Filesystem for QuicFS {
                     };
 
                     // Store both the attributes and the path
-                    self.paths.insert(ino, format!("/{}", entry.name));
+                    self.paths.insert(ino, entry.name.clone());
                     self.inodes.insert(ino, attr.clone());
                     info!("Mapped inode {} to path {} with size {}", ino, format!("/{}", entry.name), attr.size);
                     self.next_inode += 1;
