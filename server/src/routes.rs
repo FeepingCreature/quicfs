@@ -14,7 +14,7 @@ pub async fn list_directory(
     path: Option<Path<String>>,
 ) -> impl IntoResponse {
     let dir_path = match path {
-        Some(Path(p)) => format!("/dir/{}", p),
+        Some(Path(p)) => format!("/dir/{}", urlencoding::decode(&p).unwrap_or(p)),
         None => "/dir/".to_string(),
     };
     info!("GET /dir/{}", dir_path);
@@ -40,7 +40,7 @@ pub async fn read_file(
     State(fs): State<Arc<FileSystem>>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
-    match fs.read_file(&format!("/file/{}", path)).await {
+    match fs.read_file(&format!("/file/{}", urlencoding::decode(&path).unwrap_or(path))).await {
         Ok(data) => (StatusCode::OK, Bytes::from(data)).into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -57,7 +57,8 @@ pub async fn write_file(
     headers: http::HeaderMap,
     bytes: Bytes,
 ) -> impl IntoResponse {
-    info!("PATCH /file/{} with {} bytes", path, bytes.len());
+    let decoded_path = urlencoding::decode(&path).unwrap_or(path.clone());
+    info!("PATCH /file/{} with {} bytes", decoded_path, bytes.len());
     
     // Parse and validate Content-Range header
     let (offset, expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
@@ -87,7 +88,7 @@ pub async fn write_file(
                             "error": "Truncate operation should not include content"
                         }))).into_response();
                     }
-                    return match fs.truncate_file(&format!("/file/{}", path), new_size).await {
+                    return match fs.truncate_file(&format!("/file/{}", decoded_path), new_size).await {
                         Ok(_) => StatusCode::OK.into_response(),
                         Err(err) => (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -159,7 +160,7 @@ pub async fn write_file(
     };
 
     info!("Writing {} bytes at offset: {}", expected_len, offset);
-    match fs.write_file(&format!("/file/{}", path), offset, &bytes).await {
+    match fs.write_file(&format!("/file/{}", decoded_path), offset, &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

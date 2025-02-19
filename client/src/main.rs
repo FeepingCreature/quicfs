@@ -553,7 +553,9 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                self.read_file(&path, offset as u64, _size).await
+                // URL encode the path
+                let encoded_path = urlencoding::encode(&path);
+                self.read_file(&encoded_path, offset as u64, _size).await
             })
         });
 
@@ -774,8 +776,10 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
+                // URL encode the path
+                let encoded_path = urlencoding::encode(&path);
                 info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
-                let result = self.write_file(&path, offset as u64, contents).await;
+                let result = self.write_file(&encoded_path, offset as u64, contents).await;
                 info!("Write result: {:?}", result);
                 result
             })

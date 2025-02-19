@@ -1,17 +1,13 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
 
 use quicfs_server::{fs::FileSystem, http::HttpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt::init();
 
     // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
