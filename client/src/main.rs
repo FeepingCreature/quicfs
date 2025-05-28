@@ -2,12 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
-    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, ReplyInit, KernelConfig,
-    consts::{
-        FUSE_WRITEBACK_CACHE, FUSE_BIG_WRITES, FUSE_ASYNC_READ, FUSE_ASYNC_DIO,
-        FUSE_PARALLEL_DIROPS, FUSE_AUTO_INVAL_DATA, FUSE_DO_READDIRPLUS,
-        FUSE_CACHE_SYMLINKS, FUSE_ATOMIC_O_TRUNC, FUSE_DONT_MASK,
-    },
+    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, KernelConfig,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -474,16 +469,16 @@ impl Filesystem for QuicFS {
         info!("Initializing filesystem with advanced FUSE capabilities");
 
         // Combine multiple performance and functionality flags
-        let capabilities = FUSE_WRITEBACK_CACHE    // Writeback cache for better write performance
-            | FUSE_BIG_WRITES                      // Support writes larger than 4KB
-            | FUSE_ASYNC_READ                      // Asynchronous read requests
-            | FUSE_ASYNC_DIO                       // Asynchronous direct I/O
-            | FUSE_PARALLEL_DIROPS                 // Parallel directory operations
-            | FUSE_AUTO_INVAL_DATA                 // Automatic cache invalidation
-            | FUSE_DO_READDIRPLUS                  // READDIR+LOOKUP optimization
-            | FUSE_CACHE_SYMLINKS                  // Cache symlink responses
-            | FUSE_ATOMIC_O_TRUNC                  // Handle O_TRUNC atomically
-            | FUSE_DONT_MASK;                      // Don't apply umask to file modes
+        let capabilities = fuser::consts::FUSE_WRITEBACK_CACHE    // Writeback cache for better write performance
+            | fuser::consts::FUSE_BIG_WRITES                      // Support writes larger than 4KB
+            | fuser::consts::FUSE_ASYNC_READ                      // Asynchronous read requests
+            | fuser::consts::FUSE_ASYNC_DIO                       // Asynchronous direct I/O
+            | fuser::consts::FUSE_PARALLEL_DIROPS                 // Parallel directory operations
+            | fuser::consts::FUSE_AUTO_INVAL_DATA                 // Automatic cache invalidation
+            | fuser::consts::FUSE_DO_READDIRPLUS                  // READDIR+LOOKUP optimization
+            | fuser::consts::FUSE_CACHE_SYMLINKS                  // Cache symlink responses
+            | fuser::consts::FUSE_ATOMIC_O_TRUNC                  // Handle O_TRUNC atomically
+            | fuser::consts::FUSE_DONT_MASK;                      // Don't apply umask to file modes
 
         match config.add_capabilities(capabilities) {
             Ok(()) => {
