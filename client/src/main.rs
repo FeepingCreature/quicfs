@@ -95,9 +95,18 @@ struct QuicFS {
 
 impl QuicFS {
     async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
+        // Parse the server URL to extract host and port for the header
+        let server_uri = self.server_url.parse::<http::Uri>()?;
+        let host = server_uri.host().unwrap_or("localhost");
+        let port = server_uri.port_u16().unwrap_or(4433);
+        
+        // Build just the path part for the request
+        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        
         let req = Request::builder()
             .method("PATCH")
-            .uri(format!("{}/file/{}", self.server_url, path.trim_start_matches('/')))
+            .uri(&request_path)
+            .header("host", format!("{}:{}", host, port))
             .header("Content-Range", format!("bytes {}-{}/{}", 
                 offset, 
                 offset + (contents.len() as u64).saturating_sub(1),
@@ -125,9 +134,19 @@ impl QuicFS {
     }
 
     async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
+        // Parse the server URL to extract host and port for the header
+        let server_uri = self.server_url.parse::<http::Uri>()?;
+        let host = server_uri.host().unwrap_or("localhost");
+        let port = server_uri.port_u16().unwrap_or(4433);
+        
+        // Build just the path part for the request
+        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        debug!("read_file: Building request for path: {}", request_path);
+        
         let req = Request::builder()
             .method("GET")
-            .uri(format!("{}/file/{}", self.server_url, path))
+            .uri(&request_path)
+            .header("host", format!("{}:{}", host, port))
             .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
             .body(())?;
 
@@ -725,10 +744,19 @@ impl Filesystem for QuicFS {
                         .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                         .clone();
                     
+                    // Parse the server URL to extract host and port for the header
+                    let server_uri = self.server_url.parse::<http::Uri>()?;
+                    let host = server_uri.host().unwrap_or("localhost");
+                    let port = server_uri.port_u16().unwrap_or(4433);
+                    
+                    // Build just the path part for the request
+                    let request_path = format!("/file{}", path);
+                    
                     // Make a request to truncate the file
                     let req = Request::builder()
                         .method("PATCH")
-                        .uri(format!("{}/file{}", self.server_url, path))
+                        .uri(&request_path)
+                        .header("host", format!("{}:{}", host, port))
                         .header("Content-Range", format!("bytes */{}", size))
                         .body(())?;
 
