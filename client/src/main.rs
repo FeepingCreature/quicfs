@@ -495,10 +495,10 @@ impl Filesystem for QuicFS {
                         blksize: 512,
                     };
 
-                    // Store both the attributes and the path
-                    self.paths.insert(ino, entry.name.clone());
+                    // Store both the attributes and the path - store the full path with leading slash
+                    self.paths.insert(ino, path.clone());
                     self.inodes.insert(ino, attr.clone());
-                    info!("Mapped inode {} to path {} with size {}", ino, format!("/{}", entry.name), attr.size);
+                    info!("Mapped inode {} to path {} with size {}", ino, path, attr.size);
                     self.next_inode += 1;
                     info!("Returning lookup response with inode {} and size {}", attr.ino, attr.size);
                     reply.entry(&TTL, &attr, 0);
@@ -616,9 +616,9 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                // URL encode the path
-                let encoded_path = urlencoding::encode(&path);
-                self.read_file(&encoded_path, offset as u64, _size).await
+                debug!("read: Reading file with path: {}", path);
+                // The path already has a leading slash, so we don't need to encode it
+                self.read_file(&path, offset as u64, _size).await
             })
         });
 
@@ -850,10 +850,9 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                // URL encode the path
-                let encoded_path = urlencoding::encode(&path);
+                // The path already has a leading slash, so we don't need to encode it
                 info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
-                let result = self.write_file(&encoded_path, offset as u64, contents).await;
+                let result = self.write_file(&path, offset as u64, contents).await;
                 info!("Write result: {:?}", result);
                 result
             })
