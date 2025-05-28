@@ -92,8 +92,6 @@ struct QuicFS {
     paths: HashMap<u64, String>,
     next_inode: u64,
     server_url: String,
-    // Add read cache
-    read_cache: HashMap<u64, (u64, Vec<u8>)>, // inode -> (offset, data)
 }
 
 impl QuicFS {
@@ -386,7 +384,6 @@ impl QuicFS {
             paths: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
             server_url,
-            read_cache: HashMap::new(),
         };
         
         // Initial connection
@@ -692,28 +689,6 @@ impl Filesystem for QuicFS {
             return;
         }
 
-        // Check cache first
-        if let Some((cached_offset, cached_data)) = self.read_cache.get(&ino) {
-            let start = offset as u64;
-            let end = start + size as u64;
-            
-            if start >= *cached_offset && end <= *cached_offset + cached_data.len() as u64 {
-                let cache_start = (start - cached_offset) as usize;
-                let cache_end = (end - cached_offset) as usize;
-                reply.data(&cached_data[cache_start..cache_end]);
-                return;
-            }
-        }
-        
-        // Cache miss - read larger chunk (1MB) or use concurrent reads for very large requests
-        let chunk_size = 1024 * 1024; // 1MB
-        let chunk_offset = (offset as u64 / chunk_size) * chunk_size;
-        let read_size = if size > chunk_size as u32 {
-            size // Use concurrent reads for large requests
-        } else {
-            chunk_size as u32 // Read 1MB chunk for caching
-        };
-
         // Make request to server
         let read_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
@@ -722,12 +697,9 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                // Use concurrent reads for large requests, otherwise use single read
+                // Use concurrent reads for large requests
                 if size > 512 * 1024 { // 512KB threshold for concurrent reads
                     self.read_file_concurrent(&path, offset as u64, size).await
-                } else if size <= chunk_size as u32 {
-                    // Read larger chunk for caching
-                    self.read_file(&path, chunk_offset, read_size).await
                 } else {
                     self.read_file(&path, offset as u64, size).await
                 }
@@ -735,20 +707,7 @@ impl Filesystem for QuicFS {
         });
 
         match read_result {
-            Ok(data) => {
-                if size <= chunk_size as u32 && size < data.len() as u32 {
-                    // Cache the larger chunk
-                    self.read_cache.insert(ino, (chunk_offset, data.clone()));
-                    
-                    // Return requested portion
-                    let start = (offset as u64 - chunk_offset) as usize;
-                    let end = std::cmp::min(start + size as usize, data.len());
-                    reply.data(&data[start..end]);
-                } else {
-                    // Return the data directly (concurrent read or exact size match)
-                    reply.data(&data);
-                }
-            }
+            Ok(data) => reply.data(&data),
             Err(e) => {
                 warn!("Failed to read file: {}", e);
                 reply.error(libc::EIO);
@@ -860,9 +819,6 @@ impl Filesystem for QuicFS {
             attr.gid = gid;
         }
         if let Some(size) = size {
-            // Invalidate cache for this inode when size changes
-            self.read_cache.remove(&ino);
-            
             // Handle truncate by making a request to the server
             let truncate_result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
@@ -951,9 +907,6 @@ impl Filesystem for QuicFS {
     ) {
         info!("write: {} at offset {} size {}", ino, offset, contents.len());
         info!("Known paths: {:?}", self.paths);
-        
-        // Invalidate cache for this inode when writing
-        self.read_cache.remove(&ino);
         
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
