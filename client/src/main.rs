@@ -92,6 +92,8 @@ struct QuicFS {
     paths: HashMap<u64, String>,
     next_inode: u64,
     server_url: String,
+    // Add read cache
+    read_cache: HashMap<u64, (u64, Vec<u8>)>, // inode -> (offset, data)
 }
 
 impl QuicFS {
@@ -168,6 +170,109 @@ impl QuicFS {
         }
 
         Ok(body)
+    }
+
+    async fn read_file_concurrent(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
+        const CHUNK_SIZE: u32 = 256 * 1024; // 256KB per stream
+        
+        if size <= CHUNK_SIZE {
+            return self.read_file(path, offset, size).await;
+        }
+        
+        let mut tasks = Vec::new();
+        let mut current_offset = offset;
+        let mut remaining = size;
+        
+        while remaining > 0 {
+            let chunk_size = std::cmp::min(remaining, CHUNK_SIZE);
+            let chunk_offset = current_offset;
+            let path = path.to_string();
+            let server_url = self.server_url.clone();
+            
+            // Create new connection for concurrent use
+            let task = tokio::spawn(async move {
+                let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
+                
+                let mut crypto_config = rustls::ClientConfig::builder()
+                    .dangerous()
+                    .with_custom_certificate_verifier(SkipServerVerification::new())
+                    .with_no_client_auth();
+
+                crypto_config.alpn_protocols = vec![b"h3".to_vec()];
+                crypto_config.enable_early_data = true;
+
+                let mut transport_config = quinn::TransportConfig::default();
+                transport_config.max_concurrent_bidi_streams(100u32.into());
+                transport_config.max_concurrent_uni_streams(100u32.into());
+                transport_config.send_window(8 * 1024 * 1024);
+                transport_config.receive_window(VarInt::from_u32(8 * 1024 * 1024));
+                transport_config.stream_receive_window(VarInt::from_u32(2 * 1024 * 1024));
+
+                let mut client_config = quinn::ClientConfig::new(Arc::new(
+                    quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
+                ));
+                client_config.transport_config(Arc::new(transport_config));
+                endpoint.set_default_client_config(client_config);
+
+                let server_uri = server_url.parse::<http::Uri>()?;
+                let host = server_uri.host().unwrap_or("localhost");
+                let port = server_uri.port_u16().unwrap_or(4433);
+                let addr = format!("{}:{}", host, port).parse()?;
+                let connection = endpoint.connect(addr, host)?.await?;
+                    
+                let h3_conn = h3_quinn::Connection::new(connection);
+                let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
+
+                tokio::spawn(async move {
+                    future::poll_fn(|cx| driver.poll_close(cx)).await;
+                });
+                
+                let request_path = format!("/file/{}", path.trim_start_matches('/'));
+                
+                let req = Request::builder()
+                    .method("GET")
+                    .uri(&request_path)
+                    .header("host", format!("{}:{}", host, port))
+                    .header("Range", format!("bytes={}-{}", chunk_offset, chunk_offset + chunk_size as u64 - 1))
+                    .body(())?;
+
+                let mut stream = send_request.send_request(req).await?;
+                stream.finish().await?;
+
+                let resp = stream.recv_response().await?;
+                
+                let mut body = Vec::new();
+                while let Some(chunk) = stream.recv_data().await? {
+                    body.extend_from_slice(chunk.chunk());
+                }
+
+                if !resp.status().is_success() {
+                    let error: serde_json::Value = serde_json::from_slice(&body)?;
+                    return Err(anyhow::anyhow!("Server error: {}", 
+                        error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                }
+
+                Ok::<(u64, Vec<u8>), anyhow::Error>((chunk_offset, body))
+            });
+            
+            tasks.push(task);
+            current_offset += chunk_size as u64;
+            remaining -= chunk_size;
+        }
+        
+        // Collect results and reassemble
+        let mut results = Vec::new();
+        for task in tasks {
+            results.push(task.await??);
+        }
+        
+        results.sort_by_key(|(offset, _)| *offset);
+        let mut final_data = Vec::with_capacity(size as usize);
+        for (_, data) in results {
+            final_data.extend(data);
+        }
+        
+        Ok(final_data)
     }
 
     async fn list_directory(&mut self, path: &str) -> Result<DirList> {
@@ -281,6 +386,7 @@ impl QuicFS {
             paths: HashMap::new(),
             next_inode: 2,  // 1 is reserved for root
             server_url,
+            read_cache: HashMap::new(),
         };
         
         // Initial connection
@@ -566,7 +672,7 @@ impl Filesystem for QuicFS {
         ino: u64,
         _fh: u64,
         offset: i64,
-        _size: u32,
+        size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
@@ -586,6 +692,28 @@ impl Filesystem for QuicFS {
             return;
         }
 
+        // Check cache first
+        if let Some((cached_offset, cached_data)) = self.read_cache.get(&ino) {
+            let start = offset as u64;
+            let end = start + size as u64;
+            
+            if start >= *cached_offset && end <= *cached_offset + cached_data.len() as u64 {
+                let cache_start = (start - cached_offset) as usize;
+                let cache_end = (end - cached_offset) as usize;
+                reply.data(&cached_data[cache_start..cache_end]);
+                return;
+            }
+        }
+        
+        // Cache miss - read larger chunk (1MB) or use concurrent reads for very large requests
+        let chunk_size = 1024 * 1024; // 1MB
+        let chunk_offset = (offset as u64 / chunk_size) * chunk_size;
+        let read_size = if size > chunk_size as u32 {
+            size // Use concurrent reads for large requests
+        } else {
+            chunk_size as u32 // Read 1MB chunk for caching
+        };
+
         // Make request to server
         let read_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
@@ -594,13 +722,33 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                // The path already has a leading slash, so we don't need to encode it
-                self.read_file(&path, offset as u64, _size).await
+                // Use concurrent reads for large requests, otherwise use single read
+                if size > 512 * 1024 { // 512KB threshold for concurrent reads
+                    self.read_file_concurrent(&path, offset as u64, size).await
+                } else if size <= chunk_size as u32 {
+                    // Read larger chunk for caching
+                    self.read_file(&path, chunk_offset, read_size).await
+                } else {
+                    self.read_file(&path, offset as u64, size).await
+                }
             })
         });
 
         match read_result {
-            Ok(data) => reply.data(&data),
+            Ok(data) => {
+                if size <= chunk_size as u32 && size < data.len() as u32 {
+                    // Cache the larger chunk
+                    self.read_cache.insert(ino, (chunk_offset, data.clone()));
+                    
+                    // Return requested portion
+                    let start = (offset as u64 - chunk_offset) as usize;
+                    let end = std::cmp::min(start + size as usize, data.len());
+                    reply.data(&data[start..end]);
+                } else {
+                    // Return the data directly (concurrent read or exact size match)
+                    reply.data(&data);
+                }
+            }
             Err(e) => {
                 warn!("Failed to read file: {}", e);
                 reply.error(libc::EIO);
@@ -712,6 +860,9 @@ impl Filesystem for QuicFS {
             attr.gid = gid;
         }
         if let Some(size) = size {
+            // Invalidate cache for this inode when size changes
+            self.read_cache.remove(&ino);
+            
             // Handle truncate by making a request to the server
             let truncate_result = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
@@ -801,6 +952,9 @@ impl Filesystem for QuicFS {
         info!("write: {} at offset {} size {}", ino, offset, contents.len());
         info!("Known paths: {:?}", self.paths);
         
+        // Invalidate cache for this inode when writing
+        self.read_cache.remove(&ino);
+        
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
             Some(attr) => attr,
@@ -868,7 +1022,12 @@ async fn main() -> Result<()> {
     match fuser::mount2(
         fs,
         &opts.mountpoint,
-        &[MountOption::FSName("quicfs".to_string())],
+        &[
+            MountOption::FSName("quicfs".to_string()),
+            MountOption::AutoUnmount,
+            MountOption::AllowOther,
+            MountOption::DefaultPermissions,
+        ],
     ) {
         Ok(_) => {
             info!("Filesystem mounted successfully");
