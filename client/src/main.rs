@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
-    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, KernelConfig,
+    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, KernelConfig, ReplyDirectoryPlus,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -462,6 +462,41 @@ impl QuicFS {
         fs.inodes.insert(ROOT_INODE, root);
         Ok(fs)
     }
+
+    fn create_file_attr_from_entry(&mut self, entry: &quicfs_common::types::DirEntry, path: &str) -> FileAttr {
+        let file_type = match entry.type_.as_str() {
+            "file" => FileType::RegularFile,
+            "dir" => FileType::Directory,
+            _ => FileType::RegularFile, // Default fallback
+        };
+
+        let ino = self.next_inode;
+        self.next_inode += 1;
+
+        let attr = FileAttr {
+            ino,
+            size: entry.size,
+            blocks: (entry.size + 511) / 512,
+            atime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0)),
+            mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0)),
+            ctime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
+            crtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
+            kind: file_type,
+            perm: entry.mode as u16,
+            nlink: 1,
+            uid: 1000,
+            gid: 1000,
+            rdev: 0,
+            flags: 0,
+            blksize: 512,
+        };
+
+        // Store both the attributes and the path
+        self.paths.insert(ino, path.to_string());
+        self.inodes.insert(ino, attr.clone());
+
+        attr
+    }
 }
 
 impl Filesystem for QuicFS {
@@ -882,6 +917,92 @@ impl Filesystem for QuicFS {
             }
             Err(e) => {
                 error!("readdir: Failed to list directory: {:?}", e);
+                reply.error(libc::EIO);
+            }
+        }
+    }
+
+    fn readdirplus(
+        &mut self,
+        _req: &FuseRequest,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+        mut reply: ReplyDirectoryPlus,
+    ) {
+        info!("readdirplus: {} at offset {}", ino, offset);
+
+        if ino != ROOT_INODE {
+            reply.error(ENOENT);
+            return;
+        }
+
+        // Fetch directory contents from server
+        let server_entries = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.list_directory("/").await
+            })
+        });
+
+        match server_entries {
+            Ok(dir_list) => {
+                // Create entries with full attributes (readdir + lookup combined)
+                let mut entries = Vec::new();
+
+                // Add . and .. entries
+                if let Some(root_attr) = self.inodes.get(&ROOT_INODE) {
+                    entries.push((ROOT_INODE, FileType::Directory, ".".to_string(), root_attr.clone()));
+                    entries.push((ROOT_INODE, FileType::Directory, "..".to_string(), root_attr.clone()));
+                }
+
+                // Process server entries and create/update inodes with full attributes
+                for entry in dir_list.entries {
+                    let path = format!("/{}", entry.name);
+                    
+                    // Check if we already have this path mapped to an inode
+                    let (ino, attr) = if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == path) {
+                        // Update existing inode with fresh data from server
+                        if let Some(mut attr) = self.inodes.get(&existing_ino).cloned() {
+                            attr.size = entry.size;
+                            attr.blocks = (entry.size + 511) / 512;
+                            attr.atime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0));
+                            attr.mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0));
+                            attr.ctime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0));
+                            
+                            // Update the cache
+                            self.inodes.insert(existing_ino, attr.clone());
+                            (existing_ino, attr)
+                        } else {
+                            // Existing inode not found in cache, create new one
+                            let attr = self.create_file_attr_from_entry(&entry, &path);
+                            (attr.ino, attr)
+                        }
+                    } else {
+                        // Create new inode
+                        let attr = self.create_file_attr_from_entry(&entry, &path);
+                        (attr.ino, attr)
+                    };
+
+                    let file_type = match entry.type_.as_str() {
+                        "file" => FileType::RegularFile,
+                        "dir" => FileType::Directory,
+                        _ => FileType::RegularFile,
+                    };
+
+                    entries.push((ino, file_type, entry.name, attr));
+                }
+
+                // Handle offset and add entries to reply
+                for (i, (ino, _file_type, name, attr)) in entries.iter().enumerate().skip(offset as usize) {
+                    // Reply is full, break the loop
+                    if reply.add(*ino, (i + 1) as i64, name, &TTL, attr, 0) {
+                        break;
+                    }
+                }
+                reply.ok();
+            }
+            Err(e) => {
+                error!("readdirplus: Failed to list directory: {:?}", e);
                 reply.error(libc::EIO);
             }
         }
