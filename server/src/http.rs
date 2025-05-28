@@ -67,7 +67,11 @@ impl HttpServer {
                             while let Ok(Some((req, mut stream))) = h3.accept().await {
                                 let path = req.uri().path().to_string();
                                 let method = req.method().clone();
-                                info!("Received {} request for {}", method, path);
+                                
+                                // Only log non-file GET requests
+                                if !(method == "GET" && path.starts_with("/file/")) {
+                                    info!("Received {} request for {}", method, path);
+                                }
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
@@ -84,7 +88,12 @@ impl HttpServer {
                                 match response {
                                     Ok(response) => {
                                         let (parts, mut body) = response.into_parts();
-                                        info!("Sending response: {} for {}", parts.status, path);
+                                        
+                                        // Only log non-file GET responses
+                                        if !(method == "GET" && path.starts_with("/file/")) {
+                                            info!("Sending response: {} for {}", parts.status, path);
+                                        }
+                                        
                                         let h3_response = http::Response::from_parts(parts, ());
                                         stream.send_response(h3_response).await?;
                                         
