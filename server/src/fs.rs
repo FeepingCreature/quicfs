@@ -23,6 +23,14 @@ impl FileSystem {
         Ok(())
     }
 
+    pub async fn get_file_size(&self, path: &str) -> Result<u64> {
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        
+        let metadata = fs::metadata(&full_path).await?;
+        Ok(metadata.len())
+    }
+
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
         info!("Listing directory: {}", path);
         // Handle directory paths

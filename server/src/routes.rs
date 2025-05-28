@@ -57,9 +57,9 @@ pub async fn read_file(
             if parts.len() == 2 {
                 let start: u64 = parts[0].parse().unwrap_or(0);
                 
-                // For range requests, we need the file size first
-                let file_size = match fs.read_file(&file_path).await {
-                    Ok(data) => data.len() as u64,
+                // Get file size without reading the entire file
+                let file_size = match fs.get_file_size(&file_path).await {
+                    Ok(size) => size,
                     Err(err) => return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
