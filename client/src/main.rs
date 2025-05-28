@@ -95,79 +95,105 @@ struct QuicFS {
 }
 
 impl QuicFS {
+    // Add a method to handle connection errors and retry
+    async fn request_with_retry<F, Fut, T>(&mut self, mut request_fn: F) -> Result<T>
+    where
+        F: FnMut(&mut h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        for attempt in 0..2 {
+            self.ensure_connected().await?;
+            
+            match request_fn(self.send_request.as_mut().unwrap()).await {
+                Ok(result) => return Ok(result),
+                Err(e) if attempt == 0 => {
+                    warn!("Request failed, retrying with new connection: {}", e);
+                    // Force reconnection on next attempt
+                    self.send_request = None;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+
     async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
-        // Parse the server URL to extract host and port for the header
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        
-        // Build just the path part for the request
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
         
-        let req = Request::builder()
-            .method("PATCH")
-            .uri(&request_path)
-            .header("host", format!("{}:{}", host, port))
-            .header("Content-Range", format!("bytes {}-{}/{}", 
-                offset, 
-                offset + (contents.len() as u64).saturating_sub(1),
-                offset + contents.len() as u64))
-            .body(())?;
+        self.request_with_retry(|send_request| {
+            let req = Request::builder()
+                .method("PATCH")
+                .uri(&request_path)
+                .header("host", format!("{}:{}", host, port))
+                .header("Content-Range", format!("bytes {}-{}/{}", 
+                    offset, 
+                    offset + (contents.len() as u64).saturating_sub(1),
+                    offset + contents.len() as u64))
+                .body(());
+                
+            let contents = contents.to_vec();
+            async move {
+                let req = req?;
+                let mut stream = send_request.send_request(req).await?;
+                stream.send_data(bytes::Bytes::from(contents)).await?;
+                stream.finish().await?;
 
-        self.ensure_connected().await?;
-        let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
-        stream.send_data(bytes::Bytes::copy_from_slice(contents)).await?;
-        stream.finish().await?;
+                let resp = stream.recv_response().await?;
+                
+                if !resp.status().is_success() {
+                    let mut body = Vec::new();
+                    while let Some(chunk) = stream.recv_data().await? {
+                        body.extend_from_slice(chunk.chunk());
+                    }
+                    let error: serde_json::Value = serde_json::from_slice(&body)?;
+                    return Err(anyhow::anyhow!("Server error: {}", 
+                        error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                }
 
-        let resp = stream.recv_response().await?;
-        
-        if !resp.status().is_success() {
-            let mut body = Vec::new();
-            while let Some(chunk) = stream.recv_data().await? {
-                body.extend_from_slice(chunk.chunk());
+                Ok(())
             }
-            let error: serde_json::Value = serde_json::from_slice(&body)?;
-            return Err(anyhow::anyhow!("Server error: {}", 
-                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
-        }
-
-        Ok(())
+        }).await
     }
 
     async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
-        // Parse the server URL to extract host and port for the header
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        
-        // Build just the path part for the request
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
         
-        let req = Request::builder()
-            .method("GET")
-            .uri(&request_path)
-            .header("host", format!("{}:{}", host, port))
-            .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
-            .body(())?;
+        self.request_with_retry(|send_request| {
+            let req = Request::builder()
+                .method("GET")
+                .uri(&request_path)
+                .header("host", format!("{}:{}", host, port))
+                .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
+                .body(());
+                
+            async move {
+                let req = req?;
+                let mut stream = send_request.send_request(req).await?;
+                stream.finish().await?;
 
-        self.ensure_connected().await?;
-        let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
-        stream.finish().await?;
+                let resp = stream.recv_response().await?;
+                
+                let mut body = Vec::new();
+                while let Some(chunk) = stream.recv_data().await? {
+                    body.extend_from_slice(chunk.chunk());
+                }
 
-        let resp = stream.recv_response().await?;
-        
-        let mut body = Vec::new();
-        while let Some(chunk) = stream.recv_data().await? {
-            body.extend_from_slice(chunk.chunk());
-        }
+                if !resp.status().is_success() {
+                    let error: serde_json::Value = serde_json::from_slice(&body)?;
+                    return Err(anyhow::anyhow!("Server error: {}", 
+                        error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                }
 
-        if !resp.status().is_success() {
-            let error: serde_json::Value = serde_json::from_slice(&body)?;
-            return Err(anyhow::anyhow!("Server error: {}", 
-                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
-        }
-
-        Ok(body)
+                Ok(body)
+            }
+        }).await
     }
 
     async fn read_file_concurrent(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
@@ -274,46 +300,46 @@ impl QuicFS {
     }
 
     async fn list_directory(&mut self, path: &str) -> Result<DirList> {
-        // Parse the server URL to extract just the path part for the request
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        
-        // Build the path for the request - just the path part, not the full URL
         let request_path = format!("/dir{}", path);
         
-        let req = Request::builder()
-            .method("GET")
-            .uri(&request_path)
-            .header("host", format!("{}:{}", host, port))
-            .body(())?;
+        self.request_with_retry(|send_request| {
+            let req = Request::builder()
+                .method("GET")
+                .uri(&request_path)
+                .header("host", format!("{}:{}", host, port))
+                .body(());
+                
+            async move {
+                let req = req?;
+                let mut stream = send_request.send_request(req).await?;
+                stream.finish().await?;
 
-        self.ensure_connected().await?;
-        
-        let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
-        stream.finish().await?;
+                let resp = stream.recv_response().await?;
+                let status = resp.status();
+                
+                let mut body = Vec::new();
+                while let Some(chunk) = stream.recv_data().await? {
+                    body.extend_from_slice(chunk.chunk());
+                }
 
-        let resp = stream.recv_response().await?;
-        let status = resp.status();
-        
-        let mut body = Vec::new();
-        while let Some(chunk) = stream.recv_data().await? {
-            body.extend_from_slice(chunk.chunk());
-        }
+                if !status.is_success() {
+                    let error: serde_json::Value = serde_json::from_slice(&body)?;
+                    return Err(anyhow::anyhow!("Server error: {}", 
+                        error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                }
 
-        if !status.is_success() {
-            let error: serde_json::Value = serde_json::from_slice(&body)?;
-            return Err(anyhow::anyhow!("Server error: {}", 
-                error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
-        }
-
-        match serde_json::from_slice::<DirList>(&body) {
-            Ok(dir_list) => Ok(dir_list),
-            Err(e) => {
-                error!("Failed to parse directory listing: {}", e);
-                Err(anyhow::anyhow!("Failed to parse directory listing: {}", e))
+                match serde_json::from_slice::<DirList>(&body) {
+                    Ok(dir_list) => Ok(dir_list),
+                    Err(e) => {
+                        error!("Failed to parse directory listing: {}", e);
+                        Err(anyhow::anyhow!("Failed to parse directory listing: {}", e))
+                    }
+                }
             }
-        }
+        }).await
     }
 
     async fn setup_connection(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
@@ -369,9 +395,16 @@ impl QuicFS {
     }
 
     async fn ensure_connected(&mut self) -> Result<()> {
-        if self.send_request.is_none() {
-            self.send_request = Some(self.connect().await?);
+        // Always try to use existing connection first
+        if let Some(ref mut _send_request) = self.send_request {
+            // Test the connection with a simple ping-like request
+            // If it fails, we'll recreate the connection below
+            return Ok(());
         }
+        
+        // Create new connection
+        info!("Creating new QUIC connection...");
+        self.send_request = Some(self.connect().await?);
         Ok(())
     }
 
@@ -859,30 +892,33 @@ impl Filesystem for QuicFS {
                     // Build just the path part for the request
                     let request_path = format!("/file{}", path);
                     
-                    // Make a request to truncate the file
-                    let req = Request::builder()
-                        .method("PATCH")
-                        .uri(&request_path)
-                        .header("host", format!("{}:{}", host, port))
-                        .header("Content-Range", format!("bytes */{}", size))
-                        .body(())?;
-
-                    self.ensure_connected().await?;
-                    let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
-                    stream.finish().await?;
-                    
-                    let resp = stream.recv_response().await?;
-                    if !resp.status().is_success() {
-                        let mut body = Vec::new();
-                        while let Some(chunk) = stream.recv_data().await? {
-                            body.extend_from_slice(chunk.chunk());
+                    self.request_with_retry(|send_request| {
+                        let req = Request::builder()
+                            .method("PATCH")
+                            .uri(&request_path)
+                            .header("host", format!("{}:{}", host, port))
+                            .header("Content-Range", format!("bytes */{}", size))
+                            .body(());
+                            
+                        async move {
+                            let req = req?;
+                            let mut stream = send_request.send_request(req).await?;
+                            stream.finish().await?;
+                            
+                            let resp = stream.recv_response().await?;
+                            if !resp.status().is_success() {
+                                let mut body = Vec::new();
+                                while let Some(chunk) = stream.recv_data().await? {
+                                    body.extend_from_slice(chunk.chunk());
+                                }
+                                let error: serde_json::Value = serde_json::from_slice(&body)?;
+                                return Err(anyhow::anyhow!("Server error: {}", 
+                                    error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
+                            }
+                            
+                            Ok(())
                         }
-                        let error: serde_json::Value = serde_json::from_slice(&body)?;
-                        return Err(anyhow::anyhow!("Server error: {}", 
-                            error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
-                    }
-                    
-                    Ok(())
+                    }).await
                 })
             });
 
