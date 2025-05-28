@@ -555,6 +555,10 @@ impl Filesystem for QuicFS {
                             // Update size from server entry
                             attr.size = entry.size;
                             attr.blocks = (entry.size + 511) / 512;
+                            // Use server timestamps instead of SystemTime::now()
+                            attr.atime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0));
+                            attr.mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0));
+                            attr.ctime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0));
                             // Update the cache
                             self.inodes.insert(existing_ino, attr.clone());
                             info!("Updated existing inode {} with new size {}", existing_ino, attr.size);
@@ -580,10 +584,11 @@ impl Filesystem for QuicFS {
                         ino,
                         size: entry.size,
                         blocks: (entry.size + 511) / 512,
-                        atime: SystemTime::now(),
-                        mtime: SystemTime::now(),
-                        ctime: SystemTime::now(),
-                        crtime: SystemTime::now(),
+                        // Use server timestamps instead of SystemTime::now()
+                        atime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0)),
+                        mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0)),
+                        ctime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
+                        crtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
                         kind: file_type,
                         perm: entry.mode as u16,
                         nlink: 1,
@@ -651,13 +656,17 @@ impl Filesystem for QuicFS {
                     .find(|e| e.name == filename)
                     .ok_or_else(|| anyhow::anyhow!("File not found in directory listing"))?;
 
-                // Update our cached attributes with the current size
+                // Update our cached attributes with the current size and server timestamps
                 let mut attr = self.inodes.get(&ino)
                     .ok_or_else(|| anyhow::anyhow!("Inode not found"))?
                     .clone();
                 
                 attr.size = entry.size;
                 attr.blocks = (entry.size + 511) / 512;
+                // Use server timestamps
+                attr.atime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0));
+                attr.mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0));
+                attr.ctime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0));
                 
                 // Update the cache
                 self.inodes.insert(ino, attr.clone());
