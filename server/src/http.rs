@@ -93,6 +93,8 @@ impl HttpServer {
                                             Some(Ok(frame)) => {
                                                 if let Ok(data) = frame.into_data() {
                                                     debug!("Sending response data ({} bytes)", data.len());
+                                                    let data_str = std::str::from_utf8(&data).unwrap_or("<binary>");
+                                                    debug!("Response data preview: {}", &data_str[..std::cmp::min(data_str.len(), 200)]);
                                                     stream.send_data(data.into()).await?;
                                                 }
                                             }

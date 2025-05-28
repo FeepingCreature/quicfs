@@ -6,8 +6,10 @@ use quicfs_server::{fs::FileSystem, http::HttpServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    // Initialize logging with debug level
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;

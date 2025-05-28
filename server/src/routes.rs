@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -24,6 +24,8 @@ pub async fn list_directory(
     match fs.list_directory(&dir_path).await {
         Ok(dir_list) => {
             info!("Directory listing successful with {} entries", dir_list.entries.len());
+            let json_response = serde_json::to_string(&dir_list).unwrap();
+            debug!("Sending JSON response: {}", json_response);
             (StatusCode::OK, Json(dir_list)).into_response()
         },
         Err(err) => {
