@@ -95,36 +95,16 @@ struct QuicFS {
 }
 
 impl QuicFS {
-    // Add a method to handle connection errors and retry
-    async fn request_with_retry<F, Fut, T>(&mut self, mut request_fn: F) -> Result<T>
-    where
-        F: FnMut(&mut h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>) -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        for attempt in 0..2 {
-            self.ensure_connected().await?;
-            
-            match request_fn(self.send_request.as_mut().unwrap()).await {
-                Ok(result) => return Ok(result),
-                Err(e) if attempt == 0 => {
-                    warn!("Request failed, retrying with new connection: {}", e);
-                    // Force reconnection on next attempt
-                    self.send_request = None;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        unreachable!()
-    }
-
     async fn write_file(&mut self, path: &str, offset: u64, contents: &[u8]) -> Result<()> {
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        let contents = contents.to_vec();
         
-        self.request_with_retry(|send_request| {
+        for attempt in 0..2 {
+            self.ensure_connected().await?;
+            
             let req = Request::builder()
                 .method("PATCH")
                 .uri(&request_path)
@@ -133,13 +113,11 @@ impl QuicFS {
                     offset, 
                     offset + (contents.len() as u64).saturating_sub(1),
                     offset + contents.len() as u64))
-                .body(());
+                .body(())?;
                 
-            let contents = contents.to_vec();
-            async move {
-                let req = req?;
-                let mut stream = send_request.send_request(req).await?;
-                stream.send_data(bytes::Bytes::from(contents)).await?;
+            let result = async {
+                let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
+                stream.send_data(bytes::Bytes::from(contents.clone())).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
@@ -155,8 +133,20 @@ impl QuicFS {
                 }
 
                 Ok(())
+            }.await;
+            
+            match result {
+                Ok(result) => return Ok(result),
+                Err(e) if attempt == 0 => {
+                    warn!("Request failed, retrying with new connection: {}", e);
+                    // Force reconnection on next attempt
+                    self.send_request = None;
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-        }).await
+        }
+        unreachable!()
     }
 
     async fn read_file(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
@@ -165,17 +155,18 @@ impl QuicFS {
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
         
-        self.request_with_retry(|send_request| {
+        for attempt in 0..2 {
+            self.ensure_connected().await?;
+            
             let req = Request::builder()
                 .method("GET")
                 .uri(&request_path)
                 .header("host", format!("{}:{}", host, port))
                 .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
-                .body(());
+                .body(())?;
                 
-            async move {
-                let req = req?;
-                let mut stream = send_request.send_request(req).await?;
+            let result = async {
+                let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
@@ -192,8 +183,20 @@ impl QuicFS {
                 }
 
                 Ok(body)
+            }.await;
+            
+            match result {
+                Ok(result) => return Ok(result),
+                Err(e) if attempt == 0 => {
+                    warn!("Request failed, retrying with new connection: {}", e);
+                    // Force reconnection on next attempt
+                    self.send_request = None;
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-        }).await
+        }
+        unreachable!()
     }
 
     async fn read_file_concurrent(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
@@ -305,16 +308,17 @@ impl QuicFS {
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/dir{}", path);
         
-        self.request_with_retry(|send_request| {
+        for attempt in 0..2 {
+            self.ensure_connected().await?;
+            
             let req = Request::builder()
                 .method("GET")
                 .uri(&request_path)
                 .header("host", format!("{}:{}", host, port))
-                .body(());
+                .body(())?;
                 
-            async move {
-                let req = req?;
-                let mut stream = send_request.send_request(req).await?;
+            let result = async {
+                let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
@@ -338,8 +342,20 @@ impl QuicFS {
                         Err(anyhow::anyhow!("Failed to parse directory listing: {}", e))
                     }
                 }
+            }.await;
+            
+            match result {
+                Ok(result) => return Ok(result),
+                Err(e) if attempt == 0 => {
+                    warn!("Request failed, retrying with new connection: {}", e);
+                    // Force reconnection on next attempt
+                    self.send_request = None;
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-        }).await
+        }
+        unreachable!()
     }
 
     async fn setup_connection(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
@@ -892,17 +908,18 @@ impl Filesystem for QuicFS {
                     // Build just the path part for the request
                     let request_path = format!("/file{}", path);
                     
-                    self.request_with_retry(|send_request| {
+                    for attempt in 0..2 {
+                        self.ensure_connected().await?;
+                        
                         let req = Request::builder()
                             .method("PATCH")
                             .uri(&request_path)
                             .header("host", format!("{}:{}", host, port))
                             .header("Content-Range", format!("bytes */{}", size))
-                            .body(());
+                            .body(())?;
                             
-                        async move {
-                            let req = req?;
-                            let mut stream = send_request.send_request(req).await?;
+                        let result = async {
+                            let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                             stream.finish().await?;
                             
                             let resp = stream.recv_response().await?;
@@ -917,8 +934,20 @@ impl Filesystem for QuicFS {
                             }
                             
                             Ok(())
+                        }.await;
+                        
+                        match result {
+                            Ok(result) => return Ok(result),
+                            Err(e) if attempt == 0 => {
+                                warn!("Request failed, retrying with new connection: {}", e);
+                                // Force reconnection on next attempt
+                                self.send_request = None;
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         }
-                    }).await
+                    }
+                    unreachable!()
                 })
             });
 
