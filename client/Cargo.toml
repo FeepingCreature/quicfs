@@ -9,7 +9,7 @@ tokio = { version = "*", features = ["full"] }
 rustls = { version = "*", features = ["ring"] }
 anyhow = "*"
 quicfs-common = { path = "../common" }
-fuser = "*"
+fuser = { version = "*", features = ["abi-7-9", "abi-7-10", "abi-7-12", "abi-7-14", "abi-7-17", "abi-7-18", "abi-7-20", "abi-7-21", "abi-7-22", "abi-7-23", "abi-7-25", "abi-7-26", "abi-7-28"] }
 libc = "*"
 clap = { version = "*", features = ["derive"] }
 tracing = "*"
