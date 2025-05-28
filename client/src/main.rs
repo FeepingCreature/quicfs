@@ -152,12 +152,19 @@ impl QuicFS {
     }
 
     async fn list_directory(&mut self, path: &str) -> Result<DirList> {
-        let uri = format!("{}/dir{}", self.server_url, path);
-        debug!("list_directory: Building request for URI: {}", uri);
+        // Parse the server URL to extract just the path part for the request
+        let server_uri = self.server_url.parse::<http::Uri>()?;
+        let host = server_uri.host().unwrap_or("localhost");
+        let port = server_uri.port_u16().unwrap_or(4433);
+        
+        // Build the path for the request - just the path part, not the full URL
+        let request_path = format!("/dir{}", path);
+        debug!("list_directory: Building request for path: {}", request_path);
         
         let req = Request::builder()
             .method("GET")
-            .uri(&uri)
+            .uri(&request_path)
+            .header("host", format!("{}:{}", host, port))
             .body(())?;
 
         debug!("list_directory: Ensuring connection...");
