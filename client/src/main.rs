@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, 
-    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen,
+    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, ReplyInit, KernelConfig,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -465,6 +465,28 @@ impl QuicFS {
 }
 
 impl Filesystem for QuicFS {
+    fn init(&mut self, _req: &FuseRequest, config: &mut KernelConfig) -> Result<(), libc::c_int> {
+        info!("Initializing filesystem with writeback cache support");
+        
+        // Enable writeback cache mode for better write performance
+        // FUSE_WRITEBACK_CACHE = 0x10 (from FUSE kernel headers)
+        const FUSE_WRITEBACK_CACHE: u32 = 0x10;
+        
+        match config.add_capabilities(FUSE_WRITEBACK_CACHE) {
+            Ok(()) => {
+                info!("Successfully enabled writeback cache mode");
+            }
+            Err(unsupported) => {
+                warn!("Failed to enable writeback cache, unsupported capabilities: 0x{:x}", unsupported);
+            }
+        }
+        
+        // Also try to increase write size for better performance
+        let _ = config.set_max_write(1024 * 1024); // 1MB writes
+        
+        Ok(())
+    }
+
     fn open(&mut self, _req: &FuseRequest, ino: u64, flags: i32, reply: ReplyOpen) {
         info!("open: inode {} with flags {}", ino, flags);
         
@@ -474,9 +496,9 @@ impl Filesystem for QuicFS {
             return;
         }
         
-        // Return file handle with writeback cache flags for better performance
+        // Return file handle with cache flags for better performance
         let fh = ino; // Use inode as file handle for simplicity
-        let open_flags = fuser::consts::FOPEN_KEEP_CACHE | fuser::consts::FOPEN_CACHE_DIR;
+        let open_flags = fuser::consts::FOPEN_KEEP_CACHE;
         
         reply.opened(fh, open_flags);
     }
