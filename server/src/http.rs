@@ -12,7 +12,7 @@ use bytes::{Buf, Bytes};
 use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
-use tracing::{debug, info, warn, error};
+use tracing::{info, warn, error};
 
 pub struct HttpServer {
     endpoint: Endpoint,
@@ -92,9 +92,6 @@ impl HttpServer {
                                         match body.frame().await {
                                             Some(Ok(frame)) => {
                                                 if let Ok(data) = frame.into_data() {
-                                                    debug!("Sending response data ({} bytes)", data.len());
-                                                    let data_str = std::str::from_utf8(&data).unwrap_or("<binary>");
-                                                    debug!("Response data preview: {}", &data_str[..std::cmp::min(data_str.len(), 200)]);
                                                     stream.send_data(data.into()).await?;
                                                 }
                                             }
@@ -102,7 +99,7 @@ impl HttpServer {
                                                 error!("Error converting response body: {}", e);
                                                 return Err(anyhow::anyhow!("Body error: {}", e));
                                             }
-                                            None => debug!("Empty response body"),
+                                            None => {},
                                         }
                                     },
                                     Err(e) => {

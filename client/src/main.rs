@@ -7,7 +7,7 @@ use fuser::{
 use libc::ENOENT;
 use std::ffi::OsStr;
 use std::time::{Duration, SystemTime};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error};
 use std::collections::HashMap;
 use std::sync::Arc;
 use quicfs_common::types::DirList;
@@ -141,7 +141,6 @@ impl QuicFS {
         
         // Build just the path part for the request
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
-        debug!("read_file: Building request for path: {}", request_path);
         
         let req = Request::builder()
             .method("GET")
@@ -178,7 +177,6 @@ impl QuicFS {
         
         // Build the path for the request - just the path part, not the full URL
         let request_path = format!("/dir{}", path);
-        debug!("list_directory: Building request for path: {}", request_path);
         
         let req = Request::builder()
             .method("GET")
@@ -186,53 +184,29 @@ impl QuicFS {
             .header("host", format!("{}:{}", host, port))
             .body(())?;
 
-        debug!("list_directory: Ensuring connection...");
         self.ensure_connected().await?;
         
-        debug!("list_directory: Sending request...");
         let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
         stream.finish().await?;
 
-        debug!("list_directory: Waiting for response...");
         let resp = stream.recv_response().await?;
         let status = resp.status();
-        debug!("list_directory: Got response status: {}", status);
         
         let mut body = Vec::new();
         while let Some(chunk) = stream.recv_data().await? {
-            debug!("list_directory: Received chunk");
             body.extend_from_slice(chunk.chunk());
-        }
-        
-        debug!("list_directory: Total response body size: {} bytes", body.len());
-        if !body.is_empty() {
-            match std::str::from_utf8(&body) {
-                Ok(body_str) => {
-                    debug!("list_directory: Response body as string: {}", body_str);
-                }
-                Err(e) => {
-                    debug!("list_directory: Response body is not valid UTF-8: {}", e);
-                    debug!("list_directory: Raw bytes: {:?}", &body[..std::cmp::min(body.len(), 100)]);
-                }
-            }
         }
 
         if !status.is_success() {
-            error!("list_directory: Server returned error status: {}", status);
             let error: serde_json::Value = serde_json::from_slice(&body)?;
             return Err(anyhow::anyhow!("Server error: {}", 
                 error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
         }
 
-        debug!("list_directory: Attempting to parse JSON response...");
         match serde_json::from_slice::<DirList>(&body) {
-            Ok(dir_list) => {
-                debug!("list_directory: Successfully parsed DirList with {} entries", dir_list.entries.len());
-                Ok(dir_list)
-            }
+            Ok(dir_list) => Ok(dir_list),
             Err(e) => {
-                error!("list_directory: Failed to parse JSON: {}", e);
-                error!("list_directory: Response body was: {:?}", std::str::from_utf8(&body));
+                error!("Failed to parse directory listing: {}", e);
                 Err(anyhow::anyhow!("Failed to parse directory listing: {}", e))
             }
         }
@@ -285,9 +259,7 @@ impl QuicFS {
 
     async fn ensure_connected(&mut self) -> Result<()> {
         if self.send_request.is_none() {
-            debug!("ensure_connected: No connection exists, creating new one...");
             self.send_request = Some(self.connect().await?);
-            debug!("ensure_connected: Connection established");
         }
         Ok(())
     }
@@ -616,7 +588,6 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
                 
-                debug!("read: Reading file with path: {}", path);
                 // The path already has a leading slash, so we don't need to encode it
                 self.read_file(&path, offset as u64, _size).await
             })
@@ -655,14 +626,12 @@ impl Filesystem for QuicFS {
         // Fetch directory contents from server and append to entries
         let server_entries = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                debug!("readdir: Calling list_directory for root");
                 self.list_directory("/").await
             })
         });
 
         match server_entries {
             Ok(dir_list) => {
-                debug!("readdir: Got {} entries from server", dir_list.entries.len());
                 // Collect names into owned strings first
                 let file_entries: Vec<(u64, FileType, String)> = dir_list.entries
                     .into_iter()
