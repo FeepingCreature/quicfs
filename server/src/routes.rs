@@ -128,12 +128,12 @@ pub async fn write_file(
     bytes: Bytes,
 ) -> impl IntoResponse {
     let decoded_path = urlencoding::decode(&path).unwrap_or_else(|_| path.clone().into());
-    info!("PATCH /file/{} with {} bytes", decoded_path, bytes.len());
+    // info!("PATCH /file/{} with {} bytes", decoded_path, bytes.len());
     
     // Parse and validate Content-Range header
-    let (offset, expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
+    let (offset, _expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {
         Some(range) => {
-            info!("Content-Range: {}", range);
+            // info!("Content-Range: {}", range);
             if let Some(range) = range.strip_prefix("bytes ") {
                 let parts: Vec<&str> = range.split('/').collect();
                 if parts.len() != 2 {
@@ -211,7 +211,7 @@ pub async fn write_file(
                 } else {
                     0
                 };
-                info!("Writing {} bytes at offset {}", expected_len, start);
+                // info!("Writing {} bytes at offset {}", expected_len, start);
                 if bytes.len() as u64 != expected_len {
                     return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
                         "error": format!("Content length mismatch: expected {} bytes but got {} (range: {}-{}/{})", 
@@ -229,7 +229,7 @@ pub async fn write_file(
         None => (0, bytes.len() as u64),
     };
 
-    info!("Writing {} bytes at offset: {}", expected_len, offset);
+    // info!("Writing {} bytes at offset: {}", expected_len, offset);
     match fs.write_file(&format!("/file/{}", decoded_path), offset, &bytes).await {
         Ok(_) => StatusCode::OK.into_response(),
         Err(err) => (

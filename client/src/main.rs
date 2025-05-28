@@ -997,8 +997,8 @@ impl Filesystem for QuicFS {
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
-        info!("write: {} at offset {} size {}", ino, offset, contents.len());
-        info!("Known paths: {:?}", self.paths);
+        // info!("write: {} at offset {} size {}", ino, offset, contents.len());
+        // info!("Known paths: {:?}", self.paths);
         
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
@@ -1025,9 +1025,9 @@ impl Filesystem for QuicFS {
                     .clone();
                 
                 // The path already has a leading slash, so we don't need to encode it
-                info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
+                // info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
                 let result = self.write_file(&path, offset as u64, contents).await;
-                info!("Write result: {:?}", result);
+                // info!("Write result: {:?}", result);
                 result
             })
         });
