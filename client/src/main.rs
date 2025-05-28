@@ -563,8 +563,6 @@ impl Filesystem for QuicFS {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        info!("read: {} at offset {} size {}", ino, offset, _size);
-        
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
             Some(attr) => attr,
