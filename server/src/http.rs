@@ -20,7 +20,7 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
-    pub fn new(cert_chain: Vec<CertificateDer<'static>>, private_key: PrivateKeyDer<'static>, fs: FileSystem) -> Result<Self> {
+    pub fn new(cert_chain: Vec<CertificateDer<'static>>, private_key: PrivateKeyDer<'static>, fs: FileSystem, port: u16) -> Result<Self> {
         // Create QUIC server config with ALPN protocols for HTTP/3
         let mut server_crypto = quinn::rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -38,7 +38,8 @@ impl HttpServer {
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
         server_config.transport_config(Arc::new(transport_config));
         
-        let endpoint = Endpoint::server(server_config, "0.0.0.0:4433".parse()?)?;
+        let bind_addr = format!("0.0.0.0:{}", port).parse()?;
+        let endpoint = Endpoint::server(server_config, bind_addr)?;
 
         Ok(HttpServer {
             endpoint,

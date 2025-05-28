@@ -20,13 +20,15 @@ use quinn::VarInt;
 const TTL: Duration = Duration::from_secs(1);
 
 #[derive(Parser)]
+#[command(name = "quicfs-client")]
+#[command(about = "A QUIC-based filesystem client")]
 struct Opts {
     /// Mount point for the filesystem
-    #[clap(short, long)]
+    #[arg(short, long)]
     mountpoint: String,
     
     /// Server URL (e.g., https://localhost:4433)
-    #[clap(short, long)]
+    #[arg(short, long)]
     server: String,
 }
 

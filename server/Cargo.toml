@@ -25,3 +25,4 @@ http-body-util = "*"
 tracing = "*"
 tracing-subscriber = "*"
 urlencoding = "*"
+clap = { version = "*", features = ["derive"] }

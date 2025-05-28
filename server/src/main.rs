@@ -1,8 +1,22 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use clap::Parser;
 
 use quicfs_server::{fs::FileSystem, http::HttpServer};
+
+#[derive(Parser)]
+#[command(name = "quicfs-server")]
+#[command(about = "A QUIC-based filesystem server")]
+struct Opts {
+    /// Directory to serve as the filesystem root
+    #[arg(short, long, default_value = "served_files")]
+    root: PathBuf,
+    
+    /// Port to listen on
+    #[arg(short, long, default_value = "4433")]
+    port: u16,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,6 +26,8 @@ async fn main() -> Result<()> {
         .init();
     rustls::crypto::ring::default_provider().install_default().unwrap();
 
+    let opts = Opts::parse();
+
     // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     
@@ -20,12 +36,15 @@ async fn main() -> Result<()> {
     let priv_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let cert_chain = vec![CertificateDer::from(cert_der)];
 
-    // Initialize filesystem
-    let fs = FileSystem::new(PathBuf::from("served_files"))?;
+    // Initialize filesystem with custom root directory
+    let fs = FileSystem::new(opts.root.clone())?;
     fs.ensure_root_exists().await?;
 
+    println!("Serving directory: {:?}", opts.root);
+    println!("Listening on port: {}", opts.port);
+
     // Create and run HTTP/3 server
-    let server = HttpServer::new(cert_chain, priv_key, fs)?;
+    let server = HttpServer::new(cert_chain, priv_key, fs, opts.port)?;
     server.run().await?;
 
     Ok(())
