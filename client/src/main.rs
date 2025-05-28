@@ -474,9 +474,9 @@ impl Filesystem for QuicFS {
             return;
         }
         
-        // Return file handle with KEEP_CACHE flag for better performance
+        // Return file handle with writeback cache flags for better performance
         let fh = ino; // Use inode as file handle for simplicity
-        let open_flags = fuser::consts::FOPEN_KEEP_CACHE; // Enable kernel caching
+        let open_flags = fuser::consts::FOPEN_KEEP_CACHE | fuser::consts::FOPEN_CACHE_DIR;
         
         reply.opened(fh, open_flags);
     }
@@ -1072,6 +1072,8 @@ async fn main() -> Result<()> {
             MountOption::AutoUnmount,
             MountOption::AllowOther,
             MountOption::DefaultPermissions,
+            MountOption::Exec,
+            MountOption::RW,
         ],
     ) {
         Ok(_) => {
