@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use tokio::fs;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, AsyncReadExt};
 use std::os::unix::fs::PermissionsExt;
 use anyhow::Result;
 use quicfs_common::types::{DirList, DirEntry};
@@ -77,6 +77,20 @@ impl FileSystem {
         let full_path = self.root.join(clean_path);
         info!("Reading file: {:?}", full_path);
         fs::read(&full_path).await.map_err(Into::into)
+    }
+
+    pub async fn read_file_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        
+        let mut file = fs::File::open(&full_path).await?;
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        
+        let mut buffer = vec![0u8; length as usize];
+        let bytes_read = file.read(&mut buffer).await?;
+        buffer.truncate(bytes_read);
+        
+        Ok(buffer)
     }
 
     pub async fn truncate_file(&self, path: &str, size: u64) -> Result<()> {

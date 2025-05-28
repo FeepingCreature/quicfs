@@ -50,7 +50,57 @@ pub async fn read_file(
     let decoded_path = urlencoding::decode(&path).unwrap_or_else(|_| path.clone().into());
     let file_path = format!("/file/{}", decoded_path);
     
-    // First get the file size
+    // Check for Range header first
+    if let Some(range_header) = headers.get("Range").and_then(|v| v.to_str().ok()) {
+        if let Some(range) = range_header.strip_prefix("bytes=") {
+            let parts: Vec<&str> = range.split('-').collect();
+            if parts.len() == 2 {
+                let start: u64 = parts[0].parse().unwrap_or(0);
+                
+                // For range requests, we need the file size first
+                let file_size = match fs.read_file(&file_path).await {
+                    Ok(data) => data.len() as u64,
+                    Err(err) => return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": err.to_string()
+                        }))
+                    ).into_response(),
+                };
+                
+                let end: u64 = if parts[1].is_empty() {
+                    file_size - 1
+                } else {
+                    parts[1].parse().unwrap_or(file_size - 1).min(file_size - 1)
+                };
+                
+                if start <= end && start < file_size {
+                    let length = end - start + 1;
+                    match fs.read_file_range(&file_path, start, length).await {
+                        Ok(range_data) => {
+                            return (
+                                StatusCode::PARTIAL_CONTENT,
+                                [
+                                    ("Content-Range", format!("bytes {}-{}/{}", start, end, file_size)),
+                                    ("Accept-Ranges", "bytes".to_string()),
+                                    ("Content-Length", range_data.len().to_string()),
+                                ],
+                                Bytes::from(range_data)
+                            ).into_response();
+                        }
+                        Err(err) => return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": err.to_string()
+                            }))
+                        ).into_response(),
+                    }
+                }
+            }
+        }
+    }
+    
+    // Return full file for non-range requests
     let file_data = match fs.read_file(&file_path).await {
         Ok(data) => data,
         Err(err) => return (
@@ -61,42 +111,11 @@ pub async fn read_file(
         ).into_response(),
     };
     
-    let file_size = file_data.len() as u64;
-    
-    // Check for Range header
-    if let Some(range_header) = headers.get("Range").and_then(|v| v.to_str().ok()) {
-        if let Some(range) = range_header.strip_prefix("bytes=") {
-            let parts: Vec<&str> = range.split('-').collect();
-            if parts.len() == 2 {
-                let start: u64 = parts[0].parse().unwrap_or(0);
-                let end: u64 = if parts[1].is_empty() {
-                    file_size - 1
-                } else {
-                    parts[1].parse().unwrap_or(file_size - 1).min(file_size - 1)
-                };
-                
-                if start <= end && start < file_size {
-                    let range_data = file_data[start as usize..=(end as usize)].to_vec();
-                    return (
-                        StatusCode::PARTIAL_CONTENT,
-                        [
-                            ("Content-Range", format!("bytes {}-{}/{}", start, end, file_size)),
-                            ("Accept-Ranges", "bytes".to_string()),
-                            ("Content-Length", range_data.len().to_string()),
-                        ],
-                        Bytes::from(range_data)
-                    ).into_response();
-                }
-            }
-        }
-    }
-    
-    // Return full file
     (
         StatusCode::OK,
         [
             ("Accept-Ranges", "bytes".to_string()),
-            ("Content-Length", file_size.to_string()),
+            ("Content-Length", file_data.len().to_string()),
         ],
         Bytes::from(file_data)
     ).into_response()
