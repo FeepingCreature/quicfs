@@ -11,9 +11,6 @@ rcgen = "*"
 directories = "*"
 anyhow = "*"
 quicfs-common = { path = "../common" }
-axum = { version = "*", features = ["http2", "json"] }
-axum-server = "*"
-tower-http = { version = "*", features = ["cors"] }
 h3 = "*"
 h3-quinn = "*"
 bytes = "*"
@@ -21,8 +18,6 @@ http = "*"
 http-body = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
-tower = "*"
-http-body-util = "*"
 tracing = "*"
 tracing-subscriber = "*"
 urlencoding = "*"

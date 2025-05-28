@@ -13,9 +13,9 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 
 pub struct MmapBody {
-    mmap: Mmap,
-    start: usize,
-    end: usize,
+    pub(crate) mmap: Mmap,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
     position: usize,
 }
 
@@ -36,6 +36,19 @@ impl MmapBody {
 
     pub fn len(&self) -> usize {
         self.end - self.start
+    }
+
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    pub fn get_chunk(&self, position: usize, size: usize) -> &[u8] {
+        let end_pos = std::cmp::min(position + size, self.end);
+        &self.mmap[position..end_pos]
     }
 }
 
