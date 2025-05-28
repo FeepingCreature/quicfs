@@ -1,8 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
 use fuser::{
-    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, 
+    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory,
     ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen, ReplyInit, KernelConfig,
+    consts::{
+        FUSE_WRITEBACK_CACHE, FUSE_BIG_WRITES, FUSE_ASYNC_READ, FUSE_ASYNC_DIO,
+        FUSE_PARALLEL_DIROPS, FUSE_AUTO_INVAL_DATA, FUSE_DO_READDIRPLUS,
+        FUSE_CACHE_SYMLINKS, FUSE_ATOMIC_O_TRUNC, FUSE_DONT_MASK,
+    },
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -26,7 +31,7 @@ struct Opts {
     /// Mount point for the filesystem
     #[arg(short, long)]
     mountpoint: String,
-    
+
     /// Server URL (e.g., https://localhost:4433)
     #[arg(short, long)]
     server: String,
@@ -103,40 +108,40 @@ impl QuicFS {
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
         let contents = contents.to_vec();
-        
+
         for attempt in 0..2 {
             self.ensure_connected().await?;
-            
+
             let req = Request::builder()
                 .method("PATCH")
                 .uri(&request_path)
                 .header("host", format!("{}:{}", host, port))
-                .header("Content-Range", format!("bytes {}-{}/{}", 
-                    offset, 
+                .header("Content-Range", format!("bytes {}-{}/{}",
+                    offset,
                     offset + (contents.len() as u64).saturating_sub(1),
                     offset + contents.len() as u64))
                 .body(())?;
-                
+
             let result = async {
                 let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                 stream.send_data(bytes::Bytes::from(contents.clone())).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
-                
+
                 if !resp.status().is_success() {
                     let mut body = Vec::new();
                     while let Some(chunk) = stream.recv_data().await? {
                         body.extend_from_slice(chunk.chunk());
                     }
                     let error: serde_json::Value = serde_json::from_slice(&body)?;
-                    return Err(anyhow::anyhow!("Server error: {}", 
+                    return Err(anyhow::anyhow!("Server error: {}",
                         error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
                 }
 
                 Ok(())
             }.await;
-            
+
             match result {
                 Ok(result) => return Ok(result),
                 Err(e) if attempt == 0 => {
@@ -156,23 +161,23 @@ impl QuicFS {
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/file/{}", path.trim_start_matches('/'));
-        
+
         for attempt in 0..2 {
             self.ensure_connected().await?;
-            
+
             let req = Request::builder()
                 .method("GET")
                 .uri(&request_path)
                 .header("host", format!("{}:{}", host, port))
                 .header("Range", format!("bytes={}-{}", offset, offset + size as u64 - 1))
                 .body(())?;
-                
+
             let result = async {
                 let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
-                
+
                 let mut body = Vec::new();
                 while let Some(chunk) = stream.recv_data().await? {
                     body.extend_from_slice(chunk.chunk());
@@ -180,13 +185,13 @@ impl QuicFS {
 
                 if !resp.status().is_success() {
                     let error: serde_json::Value = serde_json::from_slice(&body)?;
-                    return Err(anyhow::anyhow!("Server error: {}", 
+                    return Err(anyhow::anyhow!("Server error: {}",
                         error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
                 }
 
                 Ok(body)
             }.await;
-            
+
             match result {
                 Ok(result) => return Ok(result),
                 Err(e) if attempt == 0 => {
@@ -203,25 +208,25 @@ impl QuicFS {
 
     async fn read_file_concurrent(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
         const CHUNK_SIZE: u32 = 256 * 1024; // 256KB per stream
-        
+
         if size <= CHUNK_SIZE {
             return self.read_file(path, offset, size).await;
         }
-        
+
         let mut tasks = Vec::new();
         let mut current_offset = offset;
         let mut remaining = size;
-        
+
         while remaining > 0 {
             let chunk_size = std::cmp::min(remaining, CHUNK_SIZE);
             let chunk_offset = current_offset;
             let path = path.to_string();
             let server_url = self.server_url.clone();
-            
+
             // Create new connection for concurrent use
             let task = tokio::spawn(async move {
                 let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
-                
+
                 let mut crypto_config = rustls::ClientConfig::builder()
                     .dangerous()
                     .with_custom_certificate_verifier(SkipServerVerification::new())
@@ -248,16 +253,16 @@ impl QuicFS {
                 let port = server_uri.port_u16().unwrap_or(4433);
                 let addr = format!("{}:{}", host, port).parse()?;
                 let connection = endpoint.connect(addr, host)?.await?;
-                    
+
                 let h3_conn = h3_quinn::Connection::new(connection);
                 let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
 
                 tokio::spawn(async move {
                     future::poll_fn(|cx| driver.poll_close(cx)).await;
                 });
-                
+
                 let request_path = format!("/file/{}", path.trim_start_matches('/'));
-                
+
                 let req = Request::builder()
                     .method("GET")
                     .uri(&request_path)
@@ -269,7 +274,7 @@ impl QuicFS {
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
-                
+
                 let mut body = Vec::new();
                 while let Some(chunk) = stream.recv_data().await? {
                     body.extend_from_slice(chunk.chunk());
@@ -277,30 +282,30 @@ impl QuicFS {
 
                 if !resp.status().is_success() {
                     let error: serde_json::Value = serde_json::from_slice(&body)?;
-                    return Err(anyhow::anyhow!("Server error: {}", 
+                    return Err(anyhow::anyhow!("Server error: {}",
                         error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
                 }
 
                 Ok::<(u64, Vec<u8>), anyhow::Error>((chunk_offset, body))
             });
-            
+
             tasks.push(task);
             current_offset += chunk_size as u64;
             remaining -= chunk_size;
         }
-        
+
         // Collect results and reassemble
         let mut results = Vec::new();
         for task in tasks {
             results.push(task.await??);
         }
-        
+
         results.sort_by_key(|(offset, _)| *offset);
         let mut final_data = Vec::with_capacity(size as usize);
         for (_, data) in results {
             final_data.extend(data);
         }
-        
+
         Ok(final_data)
     }
 
@@ -309,23 +314,23 @@ impl QuicFS {
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
         let request_path = format!("/dir{}", path);
-        
+
         for attempt in 0..2 {
             self.ensure_connected().await?;
-            
+
             let req = Request::builder()
                 .method("GET")
                 .uri(&request_path)
                 .header("host", format!("{}:{}", host, port))
                 .body(())?;
-                
+
             let result = async {
                 let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                 stream.finish().await?;
 
                 let resp = stream.recv_response().await?;
                 let status = resp.status();
-                
+
                 let mut body = Vec::new();
                 while let Some(chunk) = stream.recv_data().await? {
                     body.extend_from_slice(chunk.chunk());
@@ -333,7 +338,7 @@ impl QuicFS {
 
                 if !status.is_success() {
                     let error: serde_json::Value = serde_json::from_slice(&body)?;
-                    return Err(anyhow::anyhow!("Server error: {}", 
+                    return Err(anyhow::anyhow!("Server error: {}",
                         error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
                 }
 
@@ -345,7 +350,7 @@ impl QuicFS {
                     }
                 }
             }.await;
-            
+
             match result {
                 Ok(result) => return Ok(result),
                 Err(e) if attempt == 0 => {
@@ -362,15 +367,15 @@ impl QuicFS {
 
     async fn setup_connection(&self) -> Result<h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>> {
         info!("Setting up QUIC connection...");
-        
+
         // Parse server URL and connect
         let url = self.server_url.parse::<http::Uri>()?;
         let host = url.host().unwrap_or("localhost");
         let port = url.port_u16().unwrap_or(4433);
         info!("Connecting to {}:{}", host, port);
-        
+
         let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
-        
+
         let mut crypto_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(SkipServerVerification::new())
@@ -396,7 +401,7 @@ impl QuicFS {
         // Force IPv4 lookup
         let addr = format!("{}:{}", host, port).parse()?;
         let connection = endpoint.connect(addr, host)?.await?;
-            
+
         let h3_conn = h3_quinn::Connection::new(connection);
         let (mut driver, send_request) = h3::client::new(h3_conn).await?;
 
@@ -419,7 +424,7 @@ impl QuicFS {
             // If it fails, we'll recreate the connection below
             return Ok(());
         }
-        
+
         // Create new connection
         info!("Creating new QUIC connection...");
         self.send_request = Some(self.connect().await?);
@@ -428,7 +433,7 @@ impl QuicFS {
 
     async fn new(server_url: String) -> Result<Self> {
         info!("Creating new QuicFS instance");
-        
+
         let mut fs = QuicFS {
             send_request: None,
             inodes: HashMap::new(),
@@ -436,10 +441,10 @@ impl QuicFS {
             next_inode: 2,  // 1 is reserved for root
             server_url,
         };
-        
+
         // Initial connection
         fs.ensure_connected().await?;
-        
+
         // Create root directory
         let root = FileAttr {
             ino: ROOT_INODE,
@@ -458,7 +463,7 @@ impl QuicFS {
             flags: 0,
             blksize: 512,
         };
-        
+
         fs.inodes.insert(ROOT_INODE, root);
         Ok(fs)
     }
@@ -466,40 +471,50 @@ impl QuicFS {
 
 impl Filesystem for QuicFS {
     fn init(&mut self, _req: &FuseRequest, config: &mut KernelConfig) -> Result<(), libc::c_int> {
-        info!("Initializing filesystem with writeback cache support");
-        
-        // Enable writeback cache mode for better write performance
-        // FUSE_WRITEBACK_CACHE = 0x10 (from FUSE kernel headers)
-        const FUSE_WRITEBACK_CACHE: u32 = 0x10;
-        
-        match config.add_capabilities(FUSE_WRITEBACK_CACHE) {
+        info!("Initializing filesystem with advanced FUSE capabilities");
+
+        // Combine multiple performance and functionality flags
+        let capabilities = FUSE_WRITEBACK_CACHE    // Writeback cache for better write performance
+            | FUSE_BIG_WRITES                      // Support writes larger than 4KB
+            | FUSE_ASYNC_READ                      // Asynchronous read requests
+            | FUSE_ASYNC_DIO                       // Asynchronous direct I/O
+            | FUSE_PARALLEL_DIROPS                 // Parallel directory operations
+            | FUSE_AUTO_INVAL_DATA                 // Automatic cache invalidation
+            | FUSE_DO_READDIRPLUS                  // READDIR+LOOKUP optimization
+            | FUSE_CACHE_SYMLINKS                  // Cache symlink responses
+            | FUSE_ATOMIC_O_TRUNC                  // Handle O_TRUNC atomically
+            | FUSE_DONT_MASK;                      // Don't apply umask to file modes
+
+        match config.add_capabilities(capabilities) {
             Ok(()) => {
-                info!("Successfully enabled writeback cache mode");
+                info!("Successfully enabled advanced FUSE capabilities: 0x{:x}", capabilities);
             }
             Err(unsupported) => {
-                warn!("Failed to enable writeback cache, unsupported capabilities: 0x{:x}", unsupported);
+                warn!("Some FUSE capabilities not supported: 0x{:x}", unsupported);
+                info!("Enabled capabilities: 0x{:x}", capabilities & !unsupported);
             }
         }
-        
-        // Also try to increase write size for better performance
+
+        // Set performance parameters
         let _ = config.set_max_write(1024 * 1024); // 1MB writes
-        
+        let _ = config.set_max_readahead(1024 * 1024); // 1MB readahead
+
         Ok(())
     }
 
     fn open(&mut self, _req: &FuseRequest, ino: u64, flags: i32, reply: ReplyOpen) {
         info!("open: inode {} with flags {}", ino, flags);
-        
+
         // Check if file exists
         if !self.inodes.contains_key(&ino) {
             reply.error(ENOENT);
             return;
         }
-        
+
         // Return file handle with cache flags for better performance
         let fh = ino; // Use inode as file handle for simplicity
         let open_flags = fuser::consts::FOPEN_KEEP_CACHE;
-        
+
         reply.opened(fh, open_flags);
     }
 
@@ -592,20 +607,20 @@ impl Filesystem for QuicFS {
 
     fn lookup(&mut self, _req: &FuseRequest, parent: u64, name: &OsStr, reply: ReplyEntry) {
         info!("lookup: {} in {} (pid: {})", name.to_string_lossy(), parent, _req.pid());
-        
+
         // For now, only handle root directory
         if parent != ROOT_INODE {
             info!("lookup: rejecting non-root parent inode {}", parent);
             reply.error(ENOENT);
             return;
         }
-        
+
         // Ignore special directories for now
         if name.to_string_lossy().starts_with('.') {
             reply.error(ENOENT);
             return;
         }
-        
+
         // Make a request to the server to look up the file
         let lookup_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
@@ -694,7 +709,7 @@ impl Filesystem for QuicFS {
 
     fn getattr(&mut self, _req: &FuseRequest, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         info!("getattr: {}", ino);
-        
+
         // For root directory, just return cached attributes
         if ino == ROOT_INODE {
             if let Some(attr) = self.inodes.get(&ino) {
@@ -710,21 +725,21 @@ impl Filesystem for QuicFS {
                 let path = self.paths.get(&ino)
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
-                
+
                 // Make request to list the parent directory
                 let parent_path = std::path::Path::new(&path)
                     .parent()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "/".to_string());
-                
+
                 let dir_list = self.list_directory(&parent_path).await?;
-                
+
                 // Find the file in the directory listing
                 let filename = std::path::Path::new(&path)
                     .file_name()
                     .ok_or_else(|| anyhow::anyhow!("Invalid path"))?
                     .to_string_lossy();
-                
+
                 let entry = dir_list.entries.iter()
                     .find(|e| e.name == filename)
                     .ok_or_else(|| anyhow::anyhow!("File not found in directory listing"))?;
@@ -733,17 +748,17 @@ impl Filesystem for QuicFS {
                 let mut attr = self.inodes.get(&ino)
                     .ok_or_else(|| anyhow::anyhow!("Inode not found"))?
                     .clone();
-                
+
                 attr.size = entry.size;
                 attr.blocks = (entry.size + 511) / 512;
                 // Use server timestamps
                 attr.atime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0));
                 attr.mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0));
                 attr.ctime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0));
-                
+
                 // Update the cache
                 self.inodes.insert(ino, attr.clone());
-                
+
                 Ok(attr)
             })
         });
@@ -794,7 +809,7 @@ impl Filesystem for QuicFS {
                 let path = self.paths.get(&ino)
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
-                
+
                 // Use concurrent reads for large requests
                 if size > 512 * 1024 { // 512KB threshold for concurrent reads
                     self.read_file_concurrent(&path, offset as u64, size).await
@@ -822,7 +837,7 @@ impl Filesystem for QuicFS {
         mut reply: ReplyDirectory,
     ) {
         info!("readdir: {} at offset {}", ino, offset);
-        
+
         if ino != ROOT_INODE {
             reply.error(ENOENT);
             return;
@@ -857,7 +872,7 @@ impl Filesystem for QuicFS {
                     .collect();
 
                 // Add all entries to our vector
-                entries.extend(file_entries.iter().map(|(ino, ft, name)| 
+                entries.extend(file_entries.iter().map(|(ino, ft, name)|
                     (*ino, *ft, name.as_str())
                 ));
 
@@ -923,29 +938,29 @@ impl Filesystem for QuicFS {
                     let path = self.paths.get(&ino)
                         .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                         .clone();
-                    
+
                     // Parse the server URL to extract host and port for the header
                     let server_uri = self.server_url.parse::<http::Uri>()?;
                     let host = server_uri.host().unwrap_or("localhost");
                     let port = server_uri.port_u16().unwrap_or(4433);
-                    
+
                     // Build just the path part for the request
                     let request_path = format!("/file{}", path);
-                    
+
                     for attempt in 0..2 {
                         self.ensure_connected().await?;
-                        
+
                         let req = Request::builder()
                             .method("PATCH")
                             .uri(&request_path)
                             .header("host", format!("{}:{}", host, port))
                             .header("Content-Range", format!("bytes */{}", size))
                             .body(())?;
-                            
+
                         let result = async {
                             let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
                             stream.finish().await?;
-                            
+
                             let resp = stream.recv_response().await?;
                             if !resp.status().is_success() {
                                 let mut body = Vec::new();
@@ -953,13 +968,13 @@ impl Filesystem for QuicFS {
                                     body.extend_from_slice(chunk.chunk());
                                 }
                                 let error: serde_json::Value = serde_json::from_slice(&body)?;
-                                return Err(anyhow::anyhow!("Server error: {}", 
+                                return Err(anyhow::anyhow!("Server error: {}",
                                     error.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error")));
                             }
-                            
+
                             Ok(())
                         }.await;
-                        
+
                         match result {
                             Ok(result) => return Ok(result),
                             Err(e) if attempt == 0 => {
@@ -1021,7 +1036,7 @@ impl Filesystem for QuicFS {
     ) {
         // info!("write: {} at offset {} size {}", ino, offset, contents.len());
         // info!("Known paths: {:?}", self.paths);
-        
+
         // Look up the inode
         let attr = match self.inodes.get(&ino) {
             Some(attr) => attr,
@@ -1045,7 +1060,7 @@ impl Filesystem for QuicFS {
                 let path = self.paths.get(&ino)
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
-                
+
                 // The path already has a leading slash, so we don't need to encode it
                 // info!("Writing to path {} at offset {} with {} bytes", path, offset, contents.len());
                 let result = self.write_file(&path, offset as u64, contents).await;
@@ -1072,19 +1087,19 @@ async fn main() -> Result<()> {
 
     rustls::crypto::ring::default_provider().install_default().unwrap();
     let opts = Opts::parse();
-    
+
     info!("Mounting QuicFS at {} with server {}", opts.mountpoint, opts.server);
-    
+
     // Ensure mount point exists
     if !std::path::Path::new(&opts.mountpoint).exists() {
         info!("Creating mount point directory");
         std::fs::create_dir_all(&opts.mountpoint)?;
     }
-    
+
     info!("Initializing QuicFS...");
     let fs = QuicFS::new(opts.server).await?;
     info!("QuicFS initialized successfully");
-    
+
     info!("Attempting to mount filesystem...");
     match fuser::mount2(
         fs,
