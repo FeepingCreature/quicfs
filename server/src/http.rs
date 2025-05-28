@@ -95,19 +95,20 @@ impl HttpServer {
                                 
                                 // Use app to route the request
                                 let mut app = app.clone();
-                                // Read the request body
-                                let mut body = Vec::new();
+                                
+                                // Read the request body first
+                                let mut body_data = Vec::new();
                                 while let Ok(Some(chunk)) = stream.recv_data().await {
-                                    body.extend_from_slice(chunk.chunk());
+                                    body_data.extend_from_slice(chunk.chunk());
                                 }
-                                let request = Request::from_parts(
-                                    req.into_parts().0,
-                                    Body::from(body)
-                                );
+
+                                let body = Body::from(body_data);
+                                let request = Request::from_parts(req.into_parts().0, body);
+                                
                                 let response = app.call(request).await;
                                 match response {
                                     Ok(response) => {
-                                        let (parts, mut body) = response.into_parts();
+                                        let (parts, body) = response.into_parts();
                                         
                                         // Only log non-file responses (avoid spammy GET and PATCH for files)
                                         if !((method == "GET" || method == "PATCH") && path.starts_with("/file/")) {
@@ -117,18 +118,10 @@ impl HttpServer {
                                         let h3_response = http::Response::from_parts(parts, ());
                                         stream.send_response(h3_response).await?;
                                         
-                                        // Convert axum body to bytes
-                                        match body.frame().await {
-                                            Some(Ok(frame)) => {
-                                                if let Ok(data) = frame.into_data() {
-                                                    stream.send_data(data.into()).await?;
-                                                }
-                                            }
-                                            Some(Err(e)) => {
-                                                error!("Error converting response body: {}", e);
-                                                return Err(anyhow::anyhow!("Body error: {}", e));
-                                            }
-                                            None => {},
+                                        // Stream the entire body efficiently
+                                        let body_bytes = body.collect().await?.to_bytes();
+                                        if !body_bytes.is_empty() {
+                                            stream.send_data(body_bytes.into()).await?;
                                         }
                                     },
                                     Err(e) => {

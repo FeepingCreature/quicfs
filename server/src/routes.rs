@@ -1,13 +1,14 @@
 use std::sync::Arc;
 use tracing::{info, warn, debug};
 use axum::{
+    body::Body,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
-use bytes::Bytes;
 use http::HeaderMap;
+use http_body_util::BodyExt;
 use crate::fs::FileSystem;
 
 pub async fn list_directory(
@@ -76,22 +77,35 @@ pub async fn read_file(
                 
                 if start <= end && start < file_size {
                     let length = end - start + 1;
-                    match fs.read_file_range(&file_path, start, length).await {
-                        Ok(range_data) => {
+                    // Use zero-copy mmap body for range requests
+                    let range_body = tokio::task::spawn_blocking({
+                        let fs = fs.clone();
+                        let file_path = file_path.clone();
+                        move || fs.read_file_range_mmap_body(&file_path, start, length)
+                    }).await;
+                    
+                    match range_body {
+                        Ok(Ok(mmap_body)) => {
                             return (
                                 StatusCode::PARTIAL_CONTENT,
                                 [
                                     ("Content-Range", format!("bytes {}-{}/{}", start, end, file_size)),
                                     ("Accept-Ranges", "bytes".to_string()),
-                                    ("Content-Length", range_data.len().to_string()),
+                                    ("Content-Length", mmap_body.len().to_string()),
                                 ],
-                                Bytes::from(range_data)
+                                Body::new(mmap_body)
                             ).into_response();
                         }
-                        Err(err) => return (
+                        Ok(Err(err)) => return (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(serde_json::json!({
                                 "error": err.to_string()
+                            }))
+                        ).into_response(),
+                        Err(_) => return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "Task join error"
                             }))
                         ).into_response(),
                     }
@@ -100,35 +114,57 @@ pub async fn read_file(
         }
     }
     
-    // Return full file for non-range requests
-    let file_data = match fs.read_file(&file_path).await {
-        Ok(data) => data,
-        Err(err) => return (
+    // Use zero-copy mmap body for full file requests
+    let file_body = tokio::task::spawn_blocking({
+        let fs = fs.clone();
+        let file_path = file_path.clone();
+        move || fs.read_file_mmap_body(&file_path)
+    }).await;
+    
+    match file_body {
+        Ok(Ok(mmap_body)) => {
+            (
+                StatusCode::OK,
+                [
+                    ("Accept-Ranges", "bytes".to_string()),
+                    ("Content-Length", mmap_body.len().to_string()),
+                ],
+                Body::new(mmap_body)
+            ).into_response()
+        }
+        Ok(Err(err)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": err.to_string()
             }))
         ).into_response(),
-    };
-    
-    (
-        StatusCode::OK,
-        [
-            ("Accept-Ranges", "bytes".to_string()),
-            ("Content-Length", file_data.len().to_string()),
-        ],
-        Bytes::from(file_data)
-    ).into_response()
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "Task join error"
+            }))
+        ).into_response(),
+    }
 }
 
 pub async fn write_file(
     State(fs): State<Arc<FileSystem>>,
     Path(path): Path<String>,
     headers: http::HeaderMap,
-    bytes: Bytes,
+    body: axum::body::Body,
 ) -> impl IntoResponse {
     let decoded_path = urlencoding::decode(&path).unwrap_or_else(|_| path.clone().into());
-    // info!("PATCH /file/{} with {} bytes", decoded_path, bytes.len());
+    // info!("PATCH /file/{} with body", decoded_path);
+    
+    // Collect the body bytes efficiently
+    let bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": format!("Failed to read request body: {}", e)
+            }))).into_response();
+        }
+    };
     
     // Parse and validate Content-Range header
     let (offset, _expected_len) = match headers.get("Content-Range").and_then(|v| v.to_str().ok()) {

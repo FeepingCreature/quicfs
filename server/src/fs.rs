@@ -1,10 +1,70 @@
 use std::path::PathBuf;
 use tokio::fs;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use std::os::unix::fs::PermissionsExt;
 use anyhow::Result;
 use quicfs_common::types::{DirList, DirEntry};
 use tracing::{info, warn};
+use memmap2::Mmap;
+use std::fs::File;
+use http_body::Body as HttpBody;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use bytes::Bytes;
+
+pub struct MmapBody {
+    mmap: Mmap,
+    start: usize,
+    end: usize,
+    position: usize,
+}
+
+impl MmapBody {
+    pub fn new(mmap: Mmap, start: usize, end: usize) -> Self {
+        Self {
+            mmap,
+            start,
+            end,
+            position: start,
+        }
+    }
+    
+    pub fn full_file(mmap: Mmap) -> Self {
+        let len = mmap.len();
+        Self::new(mmap, 0, len)
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+}
+
+impl HttpBody for MmapBody {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        if self.position >= self.end {
+            return Poll::Ready(None);
+        }
+
+        // Send data in chunks to avoid large allocations
+        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
+        let remaining = self.end - self.position;
+        let chunk_size = std::cmp::min(remaining, CHUNK_SIZE);
+        
+        // This is the only copy - from mmap to Bytes
+        let chunk = Bytes::copy_from_slice(
+            &self.mmap[self.position..self.position + chunk_size]
+        );
+        
+        self.position += chunk_size;
+        Poll::Ready(Some(Ok(http_body::Frame::data(chunk))))
+    }
+}
 
 pub struct FileSystem {
     root: PathBuf,
@@ -80,24 +140,31 @@ impl FileSystem {
         Ok(DirList { entries })
     }
 
-    pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
+    pub fn read_file_mmap_body(&self, path: &str) -> Result<MmapBody> {
         let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
         let full_path = self.root.join(clean_path);
-        fs::read(&full_path).await.map_err(Into::into)
+        
+        let file = File::open(&full_path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        Ok(MmapBody::full_file(mmap))
     }
 
-    pub async fn read_file_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+    pub fn read_file_range_mmap_body(&self, path: &str, offset: u64, length: u64) -> Result<MmapBody> {
         let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
         let full_path = self.root.join(clean_path);
         
-        let mut file = fs::File::open(&full_path).await?;
-        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        let file = File::open(&full_path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
         
-        let mut buffer = vec![0u8; length as usize];
-        let bytes_read = file.read(&mut buffer).await?;
-        buffer.truncate(bytes_read);
+        let start = offset as usize;
+        let end = std::cmp::min(start + length as usize, mmap.len());
         
-        Ok(buffer)
+        if start >= mmap.len() {
+            // Return empty body for out-of-bounds reads
+            return Ok(MmapBody::new(mmap, 0, 0));
+        }
+        
+        Ok(MmapBody::new(mmap, start, end))
     }
 
     pub async fn truncate_file(&self, path: &str, size: u64) -> Result<()> {
