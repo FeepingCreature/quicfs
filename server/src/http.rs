@@ -9,7 +9,7 @@ use tower::Service;
 use http::Request;
 use http_body_util::BodyExt;
 use bytes::{Buf, Bytes};
-use quinn::{Endpoint, crypto::rustls::QuicServerConfig};
+use quinn::{Endpoint, crypto::rustls::QuicServerConfig, VarInt};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::fs::FileSystem;
 use tracing::{info, warn, error};
@@ -27,7 +27,17 @@ impl HttpServer {
             .with_single_cert(cert_chain, private_key)?;
         server_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
-        let server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
+        // Add QUIC transport configuration for performance
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.max_concurrent_bidi_streams(100u32.into());
+        transport_config.max_concurrent_uni_streams(100u32.into());
+        transport_config.send_window(8 * 1024 * 1024); // 8MB
+        transport_config.receive_window(VarInt::from_u32(8 * 1024 * 1024)); // 8MB
+        transport_config.stream_receive_window(VarInt::from_u32(2 * 1024 * 1024)); // 2MB per stream
+
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
+        server_config.transport_config(Arc::new(transport_config));
+        
         let endpoint = Endpoint::server(server_config, "0.0.0.0:4433".parse()?)?;
 
         Ok(HttpServer {
@@ -42,9 +52,9 @@ impl HttpServer {
         // Create router with routes
         let app = Router::new()
             .route("/dir/", get(crate::routes::list_directory))
-            .route("/dir/*path", get(crate::routes::list_directory))
-            .route("/file/*path", get(crate::routes::read_file))
-            .route("/file/*path", patch(crate::routes::write_file))
+            .route("/dir/{*path}", get(crate::routes::list_directory))
+            .route("/file/{*path}", get(crate::routes::read_file))
+            .route("/file/{*path}", patch(crate::routes::write_file))
             .with_state(self.fs.clone());
 
         loop {
@@ -64,7 +74,16 @@ impl HttpServer {
                             let h3_conn = h3_quinn::Connection::new(connection);
                             let mut h3: h3::server::Connection<_, Bytes> = h3::server::Connection::new(h3_conn).await?;
                             
-                            while let Ok(Some((req, mut stream))) = h3.accept().await {
+                            while let Ok(Some(req_resolver)) = h3.accept().await {
+                                // Resolve the request to get the actual HTTP request and stream
+                                let (req, mut stream) = match req_resolver.resolve_request().await {
+                                    Ok((req, stream)) => (req, stream),
+                                    Err(e) => {
+                                        error!("Failed to resolve request: {}", e);
+                                        continue;
+                                    }
+                                };
+                                
                                 let path = req.uri().path().to_string();
                                 let method = req.method().clone();
                                 

@@ -5,20 +5,20 @@ edition = "2021"
 
 [dependencies]
 quinn = "*"
-tokio = { version = "1.32", features = ["full"] }
-rustls = { version = "*", features = ["quic", "dangerous_configuration"] }
-anyhow = "1.0"
+tokio = { version = "*", features = ["full"] }
+rustls = { version = "*", features = ["ring"] }
+anyhow = "*"
 quicfs-common = { path = "../common" }
-fuser = "0.13"
-libc = "0.2"
-clap = { version = "4.4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-h3 = "0.0.6"
-h3-quinn = "0.0.7"
-http = "1.2.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-bytes = "1.5"
-urlencoding = "2.1"
-futures = "0.3"
+fuser = "*"
+libc = "*"
+clap = { version = "*", features = ["derive"] }
+tracing = "*"
+tracing-subscriber = "*"
+h3 = "*"
+h3-quinn = "*"
+http = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+bytes = "*"
+urlencoding = "*"
+futures = "*"

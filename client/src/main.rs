@@ -15,6 +15,7 @@ use futures::future;
 use http::Request;
 use bytes::Buf;
 use quinn::rustls::{self, pki_types, client::danger};
+use quinn::VarInt;
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -231,9 +232,18 @@ impl QuicFS {
         crypto_config.alpn_protocols = vec![b"h3".to_vec()];
         crypto_config.enable_early_data = true;
 
-        let client_config = quinn::ClientConfig::new(Arc::new(
+        // Add QUIC transport configuration for performance
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.max_concurrent_bidi_streams(100u32.into());
+        transport_config.max_concurrent_uni_streams(100u32.into());
+        transport_config.send_window(8 * 1024 * 1024); // 8MB
+        transport_config.receive_window(VarInt::from_u32(8 * 1024 * 1024)); // 8MB
+        transport_config.stream_receive_window(VarInt::from_u32(2 * 1024 * 1024)); // 2MB per stream
+
+        let mut client_config = quinn::ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)?
         ));
+        client_config.transport_config(Arc::new(transport_config));
         endpoint.set_default_client_config(client_config);
 
         // Force IPv4 lookup
@@ -245,9 +255,7 @@ impl QuicFS {
 
         // Spawn the connection driver
         tokio::spawn(async move {
-            if let Err(e) = future::poll_fn(|cx| driver.poll_close(cx)).await {
-                tracing::error!("Connection driver error: {}", e);
-            }
+            future::poll_fn(|cx| driver.poll_close(cx)).await;
         });
 
         Ok(send_request)
@@ -487,7 +495,7 @@ impl Filesystem for QuicFS {
         }
     }
 
-    fn getattr(&mut self, _req: &FuseRequest, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, _req: &FuseRequest, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         info!("getattr: {}", ino);
         
         // For root directory, just return cached attributes
@@ -840,6 +848,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
+
+    rustls::crypto::ring::default_provider().install_default().unwrap();
     let opts = Opts::parse();
     
     info!("Mounting QuicFS at {} with server {}", opts.mountpoint, opts.server);

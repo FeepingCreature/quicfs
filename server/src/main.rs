@@ -10,13 +10,14 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
+    rustls::crypto::ring::default_provider().install_default().unwrap();
 
     // Generate TLS certificate
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     
     // For QUIC server (needs DER format)
-    let cert_der = cert.serialize_der()?;
-    let priv_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()));
+    let cert_der = cert.cert.der().clone();
+    let priv_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let cert_chain = vec![CertificateDer::from(cert_der)];
 
     // Initialize filesystem
