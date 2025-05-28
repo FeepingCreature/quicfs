@@ -106,15 +106,17 @@ impl FileSystem {
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {
         info!("Listing directory: {}", path);
-        // Handle directory paths
+        
+        // Normalize the path - remove /dir prefix and handle empty paths
         let clean_path = path.trim_start_matches("/dir").trim_start_matches('/');
         let full_path = if clean_path.is_empty() {
             self.root.clone()
         } else {
             self.root.join(clean_path)
         };
-        let mut entries = Vec::new();
-
+        
+        info!("Resolved to filesystem path: {:?}", full_path);
+        
         if !full_path.exists() {
             warn!("Path does not exist: {:?}", full_path);
             return Err(anyhow::anyhow!("Directory does not exist: {:?}", full_path));
@@ -123,7 +125,10 @@ impl FileSystem {
             warn!("Path is not a directory: {:?}", full_path);
             return Err(anyhow::anyhow!("Path is not a directory: {:?}", full_path));
         }
+        
+        let mut entries = Vec::new();
         let mut dir = fs::read_dir(&full_path).await?;
+        
         while let Some(entry) = dir.next_entry().await? {
             let metadata = entry.metadata().await?;
             let file_type = if metadata.is_dir() {
@@ -137,7 +142,7 @@ impl FileSystem {
             let ctime = metadata.created()?;
 
             let entry_name = entry.file_name().to_string_lossy().into_owned();
-            info!("Found entry: {} (type: {})", entry_name, file_type);
+            // info!("Found entry: {} (type: {})", entry_name, file_type);
             
             entries.push(DirEntry {
                 name: entry_name,
