@@ -93,13 +93,16 @@ async fn handle_request(
     let method = req.method();
     
     // Only log non-file requests (avoid spammy GET and PATCH for files)
-    if !((method == "GET" || method == "PATCH") && path.starts_with("/file/")) {
+    if !((method == "GET" || method == "PATCH" || method == "HEAD") && path.starts_with("/file/")) {
         info!("Received {} request for {}", method, path);
     }
     
     match (method.as_str(), path) {
         ("GET", path) if path.starts_with("/file/") => {
             handle_file_read(req, stream, fs).await
+        }
+        ("HEAD", path) if path.starts_with("/file/") => {
+            handle_file_head(req, stream, fs).await
         }
         ("PATCH", path) if path.starts_with("/file/") => {
             handle_file_write(req, stream, fs).await
@@ -123,6 +126,51 @@ async fn handle_request(
             Ok(())
         }
     }
+}
+
+async fn handle_file_head(
+    req: http::Request<()>,
+    mut stream: h3::server::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>,
+    fs: Arc<FileSystem>,
+) -> Result<()> {
+    let path = req.uri().path().trim_start_matches("/file/");
+    let decoded_path = urlencoding::decode(path).unwrap_or_else(|_| path.into());
+    let file_path = format!("/file/{}", decoded_path);
+    
+    match fs.get_file_stat(&file_path).await {
+        Ok(stat) => {
+            let response = http::Response::builder()
+                .status(200)
+                .header("Content-Length", stat.size.to_string())
+                .header("Content-Type", if stat.type_ == "dir" { "application/directory" } else { "application/octet-stream" })
+                .header("Accept-Ranges", "bytes")
+                .header("X-File-Mode", stat.mode.to_string())
+                .header("X-File-Type", stat.type_)
+                .header("Last-Modified", format_http_date(stat.mtime.parse::<u64>().unwrap_or(0)))
+                .header("X-Access-Time", stat.atime)
+                .header("X-Create-Time", stat.ctime)
+                .body(())?;
+            
+            stream.send_response(response).await?;
+            stream.finish().await?;
+        }
+        Err(_) => {
+            let response = http::Response::builder()
+                .status(404)
+                .body(())?;
+            stream.send_response(response).await?;
+            stream.finish().await?;
+        }
+    }
+    
+    Ok(())
+}
+
+fn format_http_date(timestamp: u64) -> String {
+    use std::time::SystemTime;
+    let datetime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp);
+    // Simple RFC 2822 format - in production you'd want to use a proper date formatting crate
+    format!("{:?}", datetime)
 }
 
 async fn handle_file_read(

@@ -201,6 +201,90 @@ impl QuicFS {
         unreachable!()
     }
 
+    async fn head_file(&mut self, path: &str) -> Result<FileAttr> {
+        let server_uri = self.server_url.parse::<http::Uri>()?;
+        let host = server_uri.host().unwrap_or("localhost");
+        let port = server_uri.port_u16().unwrap_or(4433);
+        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+
+        for attempt in 0..2 {
+            self.ensure_connected().await?;
+
+            let req = Request::builder()
+                .method("HEAD")
+                .uri(&request_path)
+                .header("host", format!("{}:{}", host, port))
+                .body(())?;
+
+            let result = async {
+                let mut stream = self.send_request.as_mut().unwrap().send_request(req).await?;
+                stream.finish().await?;
+
+                let resp = stream.recv_response().await?;
+
+                if !resp.status().is_success() {
+                    return Err(anyhow::anyhow!("File not found"));
+                }
+
+                // Extract metadata from headers
+                let size = resp.headers().get("Content-Length")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                let file_type = resp.headers().get("X-File-Type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("file");
+
+                let mode = resp.headers().get("X-File-Mode")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0o644);
+
+                let mtime = resp.headers().get("X-Access-Time")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0);
+
+                let file_type_enum = match file_type {
+                    "dir" => FileType::Directory,
+                    _ => FileType::RegularFile,
+                };
+
+                let attr = FileAttr {
+                    ino: 0, // Will be set by caller
+                    size,
+                    blocks: (size + 511) / 512,
+                    atime: SystemTime::UNIX_EPOCH + Duration::from_secs(mtime),
+                    mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(mtime),
+                    ctime: SystemTime::UNIX_EPOCH + Duration::from_secs(mtime),
+                    crtime: SystemTime::UNIX_EPOCH + Duration::from_secs(mtime),
+                    kind: file_type_enum,
+                    perm: mode as u16,
+                    nlink: if file_type_enum == FileType::Directory { 2 } else { 1 },
+                    uid: 1000,
+                    gid: 1000,
+                    rdev: 0,
+                    flags: 0,
+                    blksize: 512,
+                };
+
+                Ok(attr)
+            }.await;
+
+            match result {
+                Ok(result) => return Ok(result),
+                Err(e) if attempt == 0 => {
+                    warn!("Request failed, retrying with new connection: {}", e);
+                    self.send_request = None;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+
     async fn read_file_concurrent(&mut self, path: &str, offset: u64, size: u32) -> Result<Vec<u8>> {
         const CHUNK_SIZE: u32 = 256 * 1024; // 256KB per stream
 
@@ -574,32 +658,41 @@ impl Filesystem for QuicFS {
             }
         };
 
-        // Check if file already exists in server's directory listing
-        let lookup_result = tokio::task::block_in_place(|| {
+        // Construct the full path for the new file
+        let entry_path = if parent_path == "/" {
+            format!("/{}", name.to_string_lossy())
+        } else {
+            format!("{}/{}", parent_path, name.to_string_lossy())
+        };
+
+        // Check if file already exists using HEAD request
+        let head_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.list_directory(&parent_path).await
+                self.head_file(&entry_path).await
             })
         });
 
-        match lookup_result {
-            Ok(dir_list) => {
-                if let Some(existing) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
-                    // File exists, return existing inode if we have it
-                    let entry_path = if parent_path == "/" {
-                        format!("/{}", existing.name)
-                    } else {
-                        format!("{}/{}", parent_path, existing.name)
-                    };
-                    
-                    if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == entry_path) {
-                        if let Some(attr) = self.inodes.get(&existing_ino) {
-                            reply.created(&TTL, attr, 0, 0, flags as u32);
-                            return;
-                        }
+        match head_result {
+            Ok(mut attr) => {
+                // File exists, return existing inode if we have it
+                if let Some((&existing_ino, _)) = self.paths.iter().find(|(_, p)| **p == entry_path) {
+                    if let Some(existing_attr) = self.inodes.get(&existing_ino) {
+                        reply.created(&TTL, existing_attr, 0, 0, flags as u32);
+                        return;
                     }
                 }
 
-                // Create a new inode for the file
+                // File exists but we don't have an inode for it, create one
+                let ino = self.next_inode;
+                self.next_inode += 1;
+                attr.ino = ino;
+
+                self.inodes.insert(ino, attr);
+                self.paths.insert(ino, entry_path.clone());
+                reply.created(&TTL, &attr, 0, 0, flags as u32);
+            }
+            Err(_) => {
+                // File doesn't exist, create a new inode
                 let ino = self.next_inode;
                 self.next_inode += 1;
 
@@ -623,11 +716,6 @@ impl Filesystem for QuicFS {
 
                 // Store the inode and path
                 self.inodes.insert(ino, attr);
-                let entry_path = if parent_path == "/" {
-                    format!("/{}", name.to_string_lossy())
-                } else {
-                    format!("{}/{}", parent_path, name.to_string_lossy())
-                };
                 info!("Created inode {} with path {}", ino, entry_path);
                 self.paths.insert(ino, entry_path.clone());
 
@@ -650,10 +738,6 @@ impl Filesystem for QuicFS {
                         reply.error(libc::EIO);
                     }
                 }
-            }
-            Err(e) => {
-                warn!("Failed to check for existing file: {}", e);
-                reply.error(libc::EIO);
             }
         }
     }
@@ -695,58 +779,26 @@ impl Filesystem for QuicFS {
             }
         }
 
-        // Make a request to the server to look up the file
-        let lookup_result = tokio::task::block_in_place(|| {
+        // Use HEAD request to check if file exists and get metadata
+        let head_result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.list_directory(&parent_path).await
+                self.head_file(&entry_path).await
             })
         });
 
-        match lookup_result {
-            Ok(dir_list) => {
-                // Look for the file in the directory listing
-                if let Some(entry) = dir_list.entries.iter().find(|e| e.name == name.to_string_lossy()) {
-                    let file_type = match entry.type_.as_str() {
-                        "file" => FileType::RegularFile,
-                        "dir" => FileType::Directory,
-                        _ => {
-                            reply.error(ENOENT);
-                            return;
-                        }
-                    };
-
-                    let ino = self.next_inode;
-                    self.next_inode += 1;
-
-                    let attr = FileAttr {
-                        ino,
-                        size: entry.size,
-                        blocks: (entry.size + 511) / 512,
-                        atime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0)),
-                        mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0)),
-                        ctime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
-                        crtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0)),
-                        kind: file_type,
-                        perm: entry.mode as u16,
-                        nlink: if file_type == FileType::Directory { 2 } else { 1 },
-                        uid: 1000,
-                        gid: 1000,
-                        rdev: 0,
-                        flags: 0,
-                        blksize: 512,
-                    };
-
-                    self.paths.insert(ino, entry_path.clone());
-                    self.inodes.insert(ino, attr.clone());
-                    info!("Created inode {} for path {}", ino, entry_path);
-                    reply.entry(&TTL, &attr, 0);
-                } else {
-                    reply.error(ENOENT);
-                }
+        match head_result {
+            Ok(mut attr) => {
+                let ino = self.next_inode;
+                self.next_inode += 1;
+                attr.ino = ino;
+                
+                self.paths.insert(ino, entry_path.clone());
+                self.inodes.insert(ino, attr.clone());
+                info!("Created inode {} for path {}", ino, entry_path);
+                reply.entry(&TTL, &attr, 0);
             }
-            Err(e) => {
-                warn!("Failed to look up file: {}", e);
-                reply.error(libc::EIO);
+            Err(_) => {
+                reply.error(ENOENT);
             }
         }
     }
@@ -762,7 +814,7 @@ impl Filesystem for QuicFS {
             }
         }
 
-        // For files, fetch current attributes from server
+        // For files, use HEAD request to get current attributes
         let attr_result: Result<FileAttr, anyhow::Error> = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 // Get the stored path for this inode
@@ -770,35 +822,9 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
 
-                // Make request to list the parent directory
-                let parent_path = std::path::Path::new(&path)
-                    .parent()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "/".to_string());
-
-                let dir_list = self.list_directory(&parent_path).await?;
-
-                // Find the file in the directory listing
-                let filename = std::path::Path::new(&path)
-                    .file_name()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid path"))?
-                    .to_string_lossy();
-
-                let entry = dir_list.entries.iter()
-                    .find(|e| e.name == filename)
-                    .ok_or_else(|| anyhow::anyhow!("File not found in directory listing"))?;
-
-                // Update our cached attributes with the current size and server timestamps
-                let mut attr = self.inodes.get(&ino)
-                    .ok_or_else(|| anyhow::anyhow!("Inode not found"))?
-                    .clone();
-
-                attr.size = entry.size;
-                attr.blocks = (entry.size + 511) / 512;
-                // Use server timestamps
-                attr.atime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.atime.parse().unwrap_or(0));
-                attr.mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime.parse().unwrap_or(0));
-                attr.ctime = SystemTime::UNIX_EPOCH + Duration::from_secs(entry.ctime.parse().unwrap_or(0));
+                // Use HEAD request to get fresh metadata
+                let mut attr = self.head_file(&path).await?;
+                attr.ino = ino; // Preserve the inode number
 
                 // Update the cache
                 self.inodes.insert(ino, attr.clone());

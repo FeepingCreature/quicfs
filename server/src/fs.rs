@@ -3,7 +3,7 @@ use tokio::fs;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use std::os::unix::fs::PermissionsExt;
 use anyhow::Result;
-use quicfs_common::types::{DirList, DirEntry};
+use quicfs_common::types::{DirList, DirEntry, FileStat};
 use tracing::{info, warn};
 use memmap2::Mmap;
 use std::fs::File;
@@ -102,6 +102,37 @@ impl FileSystem {
         
         let metadata = fs::metadata(&full_path).await?;
         Ok(metadata.len())
+    }
+
+    pub async fn get_file_stat(&self, path: &str) -> Result<FileStat> {
+        let clean_path = path.trim_start_matches("/file").trim_start_matches('/');
+        let full_path = self.root.join(clean_path);
+        
+        let metadata = fs::metadata(&full_path).await?;
+        let file_type = if metadata.is_dir() {
+            "dir"
+        } else {
+            "file"
+        };
+
+        let mtime = metadata.modified()?;
+        let atime = metadata.accessed()?;
+        let ctime = metadata.created()?;
+
+        let file_name = full_path.file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new(""))
+            .to_string_lossy()
+            .into_owned();
+
+        Ok(FileStat {
+            name: file_name,
+            type_: file_type.to_string(),
+            size: metadata.len(),
+            mode: metadata.permissions().mode() & 0o777,
+            mtime: mtime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+            atime: atime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+            ctime: ctime.duration_since(std::time::UNIX_EPOCH)?.as_secs().to_string(),
+        })
     }
 
     pub async fn list_directory(&self, path: &str) -> Result<DirList> {

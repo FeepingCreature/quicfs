@@ -19,4 +19,15 @@ pub mod types {
     pub struct DirList {
         pub entries: Vec<DirEntry>
     }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct FileStat {
+        pub name: String,
+        pub type_: String,
+        pub size: u64,
+        pub mode: u32,
+        pub mtime: String,
+        pub atime: String,
+        pub ctime: String,
+    }
 }
