@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, 
-    ReplyEntry, Request as FuseRequest, TimeOrNow,
+    ReplyEntry, Request as FuseRequest, TimeOrNow, ReplyOpen,
 };
 use libc::ENOENT;
 use std::ffi::OsStr;
@@ -414,6 +414,22 @@ impl QuicFS {
 }
 
 impl Filesystem for QuicFS {
+    fn open(&mut self, _req: &FuseRequest, ino: u64, flags: i32, reply: ReplyOpen) {
+        info!("open: inode {} with flags {}", ino, flags);
+        
+        // Check if file exists
+        if !self.inodes.contains_key(&ino) {
+            reply.error(ENOENT);
+            return;
+        }
+        
+        // Return file handle with KEEP_CACHE flag for better performance
+        let fh = ino; // Use inode as file handle for simplicity
+        let open_flags = fuser::consts::FOPEN_KEEP_CACHE; // Enable kernel caching
+        
+        reply.opened(fh, open_flags);
+    }
+
     fn create(
         &mut self,
         _req: &FuseRequest,
@@ -953,7 +969,7 @@ impl Filesystem for QuicFS {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .init();
 
     rustls::crypto::ring::default_provider().install_default().unwrap();
