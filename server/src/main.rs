@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
-    rustls::crypto::ring::default_provider().install_default().unwrap();
+    rustls::crypto::aws_lc_rs::default_provider().install_default().unwrap();
 
     let opts = Opts::parse();
 
