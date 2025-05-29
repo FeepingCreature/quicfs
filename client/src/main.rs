@@ -101,7 +101,8 @@ impl QuicFS {
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        let encoded_path = urlencoding::encode(path.trim_start_matches('/'));
+        let request_path = format!("/file/{}", encoded_path);
         let contents = contents.to_vec();
 
         for attempt in 0..2 {
@@ -155,7 +156,8 @@ impl QuicFS {
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        let encoded_path = urlencoding::encode(path.trim_start_matches('/'));
+        let request_path = format!("/file/{}", encoded_path);
 
         for attempt in 0..2 {
             self.ensure_connected().await?;
@@ -205,7 +207,8 @@ impl QuicFS {
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        let request_path = format!("/file/{}", path.trim_start_matches('/'));
+        let encoded_path = urlencoding::encode(path.trim_start_matches('/'));
+        let request_path = format!("/file/{}", encoded_path);
 
         for attempt in 0..2 {
             self.ensure_connected().await?;
@@ -340,7 +343,8 @@ impl QuicFS {
                     future::poll_fn(|cx| driver.poll_close(cx)).await;
                 });
 
-                let request_path = format!("/file/{}", path.trim_start_matches('/'));
+                let encoded_path = urlencoding::encode(path.trim_start_matches('/'));
+                let request_path = format!("/file/{}", encoded_path);
 
                 let req = Request::builder()
                     .method("GET")
@@ -392,7 +396,12 @@ impl QuicFS {
         let server_uri = self.server_url.parse::<http::Uri>()?;
         let host = server_uri.host().unwrap_or("localhost");
         let port = server_uri.port_u16().unwrap_or(4433);
-        let request_path = format!("/dir{}", path);
+        let encoded_path = if path == "/" {
+            "/".to_string()
+        } else {
+            urlencoding::encode(path.trim_start_matches('/')).to_string()
+        };
+        let request_path = format!("/dir/{}", encoded_path.trim_start_matches('/'));
 
         for attempt in 0..2 {
             self.ensure_connected().await?;
@@ -722,9 +731,7 @@ impl Filesystem for QuicFS {
                 // Create empty file on server
                 let create_result = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
-                        let path = entry_path.trim_start_matches('/');
-                        let encoded_path = urlencoding::encode(&path);
-                        self.write_file(&encoded_path, 0, &[]).await
+                        self.write_file(&entry_path, 0, &[]).await
                     })
                 });
 
@@ -1155,8 +1162,9 @@ impl Filesystem for QuicFS {
                     let host = server_uri.host().unwrap_or("localhost");
                     let port = server_uri.port_u16().unwrap_or(4433);
 
-                    // Build just the path part for the request
-                    let request_path = format!("/file{}", path);
+                    // Build the encoded request path
+                    let encoded_path = urlencoding::encode(path.trim_start_matches('/')).to_string();
+                    let request_path = format!("/file/{}", encoded_path);
 
                     for attempt in 0..2 {
                         self.ensure_connected().await?;
@@ -1268,7 +1276,6 @@ impl Filesystem for QuicFS {
                     .ok_or_else(|| anyhow::anyhow!("Path not found for inode {}", ino))?
                     .clone();
 
-                // The path already has a leading slash, so we don't need to encode it
                 let result = self.write_file(&path, offset as u64, contents).await;
                 result
             })
